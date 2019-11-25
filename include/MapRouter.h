@@ -1,15 +1,14 @@
 #ifndef MAPROUTER_H 	  			 	 
 #define MAPROUTER_H
-
+// there is one more line Q
 #include <vector>
 #include <istream>
 #include <iostream>
-#include <map>
-#include <string>
 #include "XMLReader.h"
-#include "XMLWriter.h"
-#include "CSVReader.h"
-#include "CSVWriter.h"
+#include <map>
+#include <unordered_map>
+#include <string>
+#include <list>
 
 class CMapRouter{
     public:
@@ -21,12 +20,72 @@ class CMapRouter{
         static const TNodeID InvalidNodeID;
     private:
     // maybe use the map to save all the things overhere
-        std::vector <unsigned long> Vertices; // vertices are the node id
-        std::vector <int> stops; // edges are the distances
-        std::vector <char> BUS; // kee[ track of the Bus lines 
+        std::vector <TNodeID> Vertices; // vertices are the node id
+        std::vector <std::string> Stop; // edges are the distances
+        std::vector <std::string> BUS; // kee[ track of the Bus lines 
+        std::list <std::string> StopID;
+        std::vector <TNodeID> BUSStopID;
+        std::list <std::string> NodeID;
+        std::vector <std::string> BusName;
+        std::unordered_map <TNodeID ,TStopID> NodeToStop;
+        // save the node_id and the stops_id
+        std::unordered_map <TStopID ,TNodeID> StopToNode;
+        // stops_id and the node_id
+        std::unordered_map <std::string ,std::vector <TNodeID>> BUSLine;
+        // save bus line A and the stop id
+        std::unordered_map <std::string ,std::vector <std::string>> ReversedBUSLine;
+        // reversed BUSLine
+        std::unordered_map <std::string ,std::vector <std::string>> Ways; // save edges
+        std::vector <std::string>  allLines;
+        // Q
+        // what will be the number type for stop id?
+        int mark = 0;
+        bool start;
+        bool keepgoing = false;
+        TNodeID save; //  This is the road id 许多短路径组成的一个长路径
+        std::vector <TNodeID> Index;
+// this part is for the fastest path
+        double totalTime;
+        double tempTime;
+        double distance;
+        std::list <double> TimeHolder;
+        std::list <double> ShortestTime;
+        std::list <TNodeID> Stack;
+        
+// prof part  ===== more to 
+        using TNodeIndex = std::size_t;
+        std::unordered_map <TNodeID ,std::pair <double, double>> LOC;
+        // so I can use TNodeID to access the location which is good for fastest path
 
-        int NODES; // count how many nodes in the .osm
-        std::map <unsigned long, std::make_pair<unsigned long, unsigned long> > MAP;
+        struct SNode
+        {       
+            TNodeID DNodeID;
+            double DLatitude;
+            double DLongititude;
+            TStopID BusStop;
+            std::vector <std::string> allBuses;
+            std::list<SNode> next;
+            std::string roadName;
+            bool bus;
+            bool walk;
+            int WALKvelocity;
+            int BUSvelocity = 25;
+            bool oneway;
+            std::string destination;
+
+        };
+        std::list <SNode> PrevNode;
+        std::list <SNode> OneRoad;
+        std::unordered_map <std::string, std::list<SNode> > eachRoad;
+        SNode Cur;
+        SNode empty;
+        SNode TempNode;
+        SNode Iter;
+        SNode Holder;
+        std::vector <SNode> NODES; // count how many nodes in the .osm
+        std::unordered_map <TNodeID, TNodeIndex> DnodeIdToDnodeIndex;
+        std::unordered_map <TNodeID , SNode> CPnode;
+        // save node id and the lat and lon 
 
         
     public:

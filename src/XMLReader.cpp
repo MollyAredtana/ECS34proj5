@@ -57,6 +57,7 @@ bool CXMLReader::End()
 {
     // the first case is the completely empty one
     // then we don't need to set up the XML tree
+    
     int length = 0;
     input.seekg(0, input.end);
     if(input.tellg() == 0)
@@ -73,10 +74,10 @@ bool CXMLReader::ReadEntity(SXMLEntity &entity, bool skipcdata)
 {
     // int check;
     // std::string mark;
-    if(skipcdata)
-    {
-        return false;
-    }
+    // if(skipcdata)
+    // {
+    //     return false;
+    // }
     
     while(!input.eof() && Buffer.empty())
     {
