@@ -1,32 +1,25 @@
-#include "MapRouter.h" 	  			 	 
+#include "MapRouter.h" 	
+#include "XMLReader.h"
+#include "XMLEntity.h"
+#include "CSVReader.h"  			 	 
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <fstream>
 #include <unordered_map>
 #include <map>
+#include <vector>
 #include <list>
 #include <algorithm> 
-#include "XMLReader.h"
-#include "XMLEntity.h"
-#include "CSVReader.h"
-//Q  how to get rid of this error line here
-
+#include <limits.h>
 
 
 const CMapRouter::TNodeID CMapRouter::InvalidNodeID = -1;
 
 CMapRouter::CMapRouter(){
-    //Constructor of the CMapRouter
-    // I think there is no need to write anything for constructor 
-    // since we build the vectors which can be considered as the graph in .h
-
-    //整体的图只需要公交线路和站点
-
 }
 
 CMapRouter::~CMapRouter(){
-    // Destructor of the CMapRouter
-
 }
 
 double CMapRouter::HaversineDistance(double lat1, double lon1, double lat2, double lon2){
@@ -63,609 +56,1900 @@ double CMapRouter::CalculateBearing(double lat1, double lon1,double lat2, double
 // calculate the distance should use HaversineDistance * CalculateBearing 
 
 bool CMapRouter::LoadMapAndRoutes(std::istream &osm, std::istream &stops, std::istream &routes){
-    // Your code HERE
-    // Loads the map, stops, and routes given the input streams
-
-    // 在教授的做法后我们可以把stop ID也联系到 node里面
-
-    // this part is for the .osm
-    // SXMLEntity SX; // xml reader here
-// this part is for stops.csv
-    if(stops.bad() || routes.bad() || osm.bad())
-    {
+    if(stops.bad() || routes.bad() || osm.bad()){
         return false;
     }
+
     
-    CCSVReader STOPReader(stops);
-    STOPReader.ReadRow(Stop);
-    while(STOPReader.ReadRow(Stop))
-    {
-        StopID.push_back(Stop.front());
-        NodeID.push_back(Stop.back()); //  these are the node Id in the stops.csv
-        if(!StopID.empty()) // 如果不是空的
-        {
-            auto front = std::stoul(StopID.front());
-            auto num = std::stoul(NodeID.front());
-            // two maps doubly linked
-            NodeToStop[num] = front;
-            StopToNode[front] = num; // I make it become doubly linked
-            StopID.pop_front();
-            NodeID.pop_front();
-        }
-        Stop.clear();
-    }
-
-// this part is for route.csv
-
-    CCSVReader BUSReader(routes);
-
-    BUSReader.ReadRow(BUS);
-    // int pos = 0;
-    while(BUSReader.ReadRow(BUS))
-    {
-        std::vector <std::string> empty;
-        // std::string temp;
-        BusName.push_back(BUS.front());
-        BusName.erase( std::unique( BusName.begin(), BusName.end() ), BusName.end() );
-        auto key = BusName.back();
-        auto temp = BUS.back(); // this is the stop id
-        auto num = std::stoul(BUS.back());
-        if(BUS.front() == key)  //还在同一个里面
-        {
-            BUSStopID.push_back(num);
-        }
-        BUSLine[key] = BUSStopID;
-
-        // auto num = std::to_string(temp);
-
-        if(ReversedBUSLine.find(temp) != ReversedBUSLine.end()) // found
-        {
-            for(auto i : ReversedBUSLine[temp])
-            {
-                allLines.push_back(i);
-            }
-        }
-        ReversedBUSLine[temp] = allLines;
-        allLines.clear();
-        
-    }
-
-
     CXMLReader XMLReader(osm);
     SXMLEntity Entity;
-    // XMLReader.ReadEntity(Entity);
-
-
-// still have to figure out how to 区分 vertices and edges;
-    while(XMLReader.ReadEntity(Entity))
-    {
-        if(Entity.DNameData == "node" && Entity.DType == SXMLEntity::EType::StartElement)
-        {
-            // std::cout << "   ----5---  " << std::endl;
+	while(XMLReader.ReadEntity(Entity)) {
+ 		std::vector <TNodeIndex> TempIndices;
+    	double WalkSpeed = 3.0;
+    	double MaxSpeed = 25;
+    	bool IsOneWay = false;
+    	//Set up Nodes
+        if(Entity.DNameData == "node" && Entity.DType == SXMLEntity::EType::StartElement){
             auto ID = std::stoul(Entity.AttributeValue("id"));
             auto Latitude = std::stod(Entity.AttributeValue("lat"));
             auto Longititude = std::stod(Entity.AttributeValue("lon"));
-            // std::make_pair <double, double> location;
-        
+            SNode TempNode;
             TempNode.DNodeID = ID;
             TempNode.DLatitude = Latitude;
-            TempNode.DLongititude = Longititude;
-            LOC[TempNode.DNodeID] = {TempNode.DLatitude, TempNode.DLongititude};
-            DnodeIdToDnodeIndex[ID] = NODES.size();
-            // NODES.push_back(TempNode);
-
-
-            auto station = NodeToStop.find(std::stoul(Entity.AttributeValue("id")));
-            unsigned long STOPinfo;
-            // station  should be the value
-            if(station != NodeToStop.end())// which means it is in it
-            {
-                STOPinfo = std::stoul(Entity.AttributeValue("id"));
-                TempNode.BusStop = STOPinfo;
-            }
-                
-            for(auto i : BUSStopID)
-            {
-                // auto id = std::stoul(i);
-                if(STOPinfo == i)
-                {
-                    TempNode.allBuses = BusName;
+            TempNode.DLongitude = Longititude;
+            LOC[TempNode.DNodeID] = {TempNode.DLatitude, TempNode.DLongitude};
+            DNodeIdToDnodeIndex[ID] = NODES.size();
+        	NODES.push_back(TempNode);
+        	Index.push_back(ID);
+		}
+		//Set up Road Information
+    	if(Entity.DNameData == "way") {
+            while(Entity.DNameData != "way" or Entity.DType != SXMLEntity::EType::EndElement) {
+                XMLReader.ReadEntity(Entity);
+                if(Entity.DNameData == "nd" && Entity.DType == SXMLEntity::EType::StartElement) {
+                     auto TempID = std::stoul(Entity.AttributeValue("ref"));
+                    //  std::cout << "  ID IS " << TempID << std::endl;
+                     auto search = DNodeIdToDnodeIndex.find(TempID);
+                     if(search != DNodeIdToDnodeIndex.end()) {
+                        TempIndices.push_back(search->second);
+                     }
                 }
-            }
-            NODES.push_back(TempNode);  
-            CPnode[TempNode.DNodeID] = TempNode; 
+                if(Entity.DNameData == "tag" && Entity.DType == SXMLEntity::EType::StartElement) {
+                	if(Entity.AttributeValue("k") == "maxspeed") {
+                        std::stringstream TempStream(Entity.AttributeValue("v"));
+                        TempStream>>MaxSpeed;
+                	}
+                    if(Entity.AttributeValue("k") == "oneway"){
+                        IsOneWay = Entity.AttributeValue("v") == "yes";
+                    }
+            	}
+        	}
+    	}
+    	//Set up Edges
+    	for(size_t i = 0; i + 1 < TempIndices.size(); i++) {
+	        SEdge TempEdge;
+        	auto FromNode = TempIndices[i];
+        	auto ToNode = TempIndices[i + 1];
+        	TempEdge.DDistance = HaversineDistance(NODES[FromNode].DLatitude, NODES[FromNode].DLongitude, NODES[ToNode].DLatitude, NODES[ToNode].DLongitude);
+        	TempEdge.DOtherNodeIndex = ToNode;
+        	TempEdge.DTime = TempEdge.DDistance / WalkSpeed;
+        	TempEdge.DMaxSpeed = MaxSpeed;
+            // TempEdge.ID_to_Name[FromNode, ToNode] =
+        	NODES[FromNode].DEdges.push_back(TempEdge);
+        	NODES[FromNode].DWEdges.push_back(TempEdge);
+            // std::cout << "  from node " << NODES[FromNode].DNodeID <<  "  to node>> " << NODES[ToNode].DNodeID << std::endl;
+
+            // std::cout << NODES[FromNode].DNodeID << "  dnode id " << std::endl;
+        	if(!IsOneWay) 
+            { // two ways
+        		TempEdge.DOtherNodeIndex = FromNode;
+        		NODES[ToNode].DEdges.push_back(TempEdge);
+
+                // SEdge TempEdge;
+                // TempEdge.DOtherNodeIndex = ToNode;
+                // NODES[FromNode].DEdges.push_back(TempEdge);
+			}
+            // is one way
+			TempEdge.DOtherNodeIndex = FromNode;
+        	NODES[ToNode].DWEdges.push_back(TempEdge);
+            // TempEdge.DOtherNodeIndex = ToNode;
+        	// NODES[FromNode].DWEdges.push_back(TempEdge);
+    	}
+	}
+	// std::cout << "  22222ooooo " << std::endl;
+	std::vector <std::string> Stop;
+	CCSVReader STOPReader(stops);
+    // std::cout << "  sizeeee is " << stops.gcount() << std::endl;
+    STOPReader.ReadRow(Stop);
+    Stop.clear();
+    // std::cout << "  stop first info " << Stop.front() << "   " << Stop.back( ) << std::endl;
+    while(STOPReader.ReadRow(Stop))// while it is reading the file which means it does not read the end
+    {
+        // STOPReader.ReadRow(Stop);
+        StopID.push_back(Stop.front()); // use stop id to save the stop so we can match them in if
+        NodeID.push_back(Stop.back()); // same purpose
+        if(!StopID.empty()) // if we still have stop id to read
+        {
+            auto S_ID = std::stoul(StopID.front()); //  stop id
+            auto N_ID = std::stoul(NodeID.front());// node id
+            NodeToStop[N_ID] = S_ID; // create a map, from node to stop
+            auto iter = DNodeIdToDnodeIndex[N_ID]; // find the index if the current node id
+            NODES[iter].takeBUS = true;// may not be required
+            NODES[iter].BusStop.push_back(S_ID); // each  id contains several bus routes
+            StopToNode[S_ID] = N_ID; // stop to node
+            StopID.pop_front(); // pop so we can always get the front()
+            NodeID.pop_front(); //  pop
+        }
+        // Stop.clear();
+        // std::cout << "  heeeeeee " << std::endl;
+    }
+    
+    // std::cout << "    passssed   " << std::endl;
+    // this part is for route.csv
+    // std::string bus_name = "";
+	std::vector <std::string> BUS;
+    // std::list <TStopID> tempID;
+    // bool keep;
+    auto pos = 0;
+    auto count = 0;
+    double TIME;
+    double DISTANCE;
+    unsigned long SAVE_INDEX;
+    // size_t place = 0;
+    TNodeID first_id;
+    TNodeID first_index;
+    std::list<TNodeID> STOP_id;
+    std::map <std::string, std::list<TNodeID>> MAP;
+    CCSVReader BUSReader(routes);
+    BUSReader.ReadRow(BUS);
+    while(BUSReader.ReadRow(BUS))
+    {
+ 		std::vector <std::string>  allLines;
+        BusName.push_back(BUS.front());
+        //first_id = BUS.back();
+        //first_index = DNodeIdToDnodeIndex[first_id]
+        //if(NODES[first_index])
+//      if(MAP.empty() && )
+        if(MAP.empty()) // the very first start since the map is empty
+        {
+            STOP_id.push_back(std::stoul(BUS.back()));
+            MAP[BUS.front()] = STOP_id;
+            first_id = StopToNode[MAP[BUS.front()].front()]; // the first_id is the starting node
+            first_index = DNodeIdToDnodeIndex[first_id]; //  index of it
+            // for the testrouter , it will be 2, 3
+        }
+        else
+        {
+            bool check; // no need to use it
+            STOP_id.push_back(std::stoul(BUS.back())); // stop id push back one more, it is 2, 3 inside
+            MAP[BUS.front()] = STOP_id; 
+            MAP[BUS.front()].pop_front();
+            STOP_id.pop_front(); //  pop 2
+            auto cur_id = StopToNode[MAP[BUS.front()].front()]; //  cur will be 3 and 5
+            // std::cout << cur_id << "  cur_id isss  " << std::endl;
+            auto cur_index = DNodeIdToDnodeIndex[cur_id];
+
+
             
-        }
+            if(NODES[first_index].DNodeID != NODES[cur_index].DNodeID)
+            { // if the starting node is not the end one
+                
+                
+                SEdge Temp;
+                Temp.DMaxSpeed = 25;  // speed
+                // std::cout << "  first index -- >> " << NODES[first_index].DNodeID <<"    " <<  NODES[cur_index].DNodeID <<std::endl;
+                for(auto i : NODES[first_index].DEdges) // to check is there any jumping between start node and end node
+                {
+                    // std::cout << NODES[i.DOtherNodeIndex].DNodeID << "   i dnode id " <<  NODES[cur_index].DNodeID   <<  std::endl;
 
-                // in one field
-        // std::cout <<NODES.size() << "sizeeeeeeeeee" << std::endl;
-        
-        // unsigned long cp;
-        else if(Entity.DNameData == "way" && Entity.DType == SXMLEntity::EType::StartElement)
-        {
-            std::cout << "    wayyyyyyyyy   " << std::endl;
-            save = std::stoul(Entity.AttributeValue("id"));
-            mark++;
-        }
-        else if(Entity.DNameData == "nd" && Entity.DType == SXMLEntity::EType::StartElement && mark == 1)
-        {
-            OneRoad.clear();
-            for(auto i : NODES)
-            {
-                if(i.DNodeID == std::stoul(Entity.AttributeValue("ref")))
-                {
-                    PrevNode.push_front(i);
-                    OneRoad.push_front(i);
-                }
-            }
-            mark--;
-        }
-        else if(Entity.DNameData == "nd" && Entity.DType == SXMLEntity::EType::StartElement && mark == 0)
-        {
-            for(auto i : NODES)
-            {
-                if(i.DNodeID == std::stoul(Entity.AttributeValue("ref")))
-                {
-                    // PrevNode.front().next.push_front(i);
-                    // PrevNode.pop_front();
-                    // PrevNode.push_front(i);
-                    for(auto j : NODES)
+                    if(NODES[i.DOtherNodeIndex].DNodeID == NODES[cur_index].DNodeID) // found
                     {
-                        if(j.DNodeID == PrevNode.front().DNodeID)
-                        {
-                            j.next.push_front(i);
-                            std::cout << j.DNodeID   << "  " << j.next.front().DNodeID << "  this is each node id  " << std::endl;
-                            PrevNode.pop_front();
-                            PrevNode.push_front(i);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        else if(Entity.DNameData == "tag" && Entity.DType == SXMLEntity::EType::StartElement)
-        {
-            // if(Entity.AttributeValue("k") == "name")
-            // {
-            //     auto it = std::find(NODES.begin(), NODES.end(), OneRoad.front());
-            //     while(it != NODES.end())
-            //     {
-            //         it->roadName = Entity.AttributeValue("v");
-            //         OneRoad.pop_front();
-            //         auto it = std::find(NODES.begin(), NODES.end(), OneRoad.front());
-            //     }  
-            // }
-            if(Entity.AttributeValue("k") == "maxspeed")
-            {
+                        // if start is linking to end , ex: 2->3
+                        // std::cout << NODES[i.DOtherNodeIndex].DNodeID << "   i dnode id " <<  NODES[cur_index].DNodeID   <<  std::endl;
 
-                for(auto i : NODES)
-                {
-                    for(auto j : OneRoad)
-                    {
-                        if(i.DNodeID == j.DNodeID)
-                        {
-                            i.bus = true;
-                            i.BUSvelocity = std::stoi(Entity.AttributeValue("v"));
-                            break;
-                            // OneRoad.pop_front();
-                        }
+                        pos = -1;
+                        // std::cout << "  breakkkkkkkkkkk  " << std::endl;
+                        break;
                     }
-                }
-                // auto it = std::find(NODES.begin(), NODES.end(), OneRoad.front());
-                // while(it != NODES.end())
-                // {
-                //     it->bus = true;
-                //     it->BUSvelocity = std::stoi(Entity.AttributeValue("v"));
-                //     OneRoad.pop_front();
-                //     auto it = std::find(NODES.begin(), NODES.end(), OneRoad.front());
-                // }  
-            }
-            else if(Entity.AttributeValue("k") == "foot")
-            {
-                if(Entity.AttributeValue("v") == "yes")
-                {
-                    for(auto i : NODES)
+                    else
                     {
-                        for(auto j : OneRoad)
+                        // ex 3->5
+                        // std::cout << "    hiiiiiiiiii  " << count << std::endl;
+
+                        // std::cout << NODES[i.DOtherNodeIndex].DNodeID << "   i dnode id " <<  NODES[cur_index].DNodeID   <<  std::endl;
+
+                        pos = 1;
+                        for(auto j : NODES[i.DOtherNodeIndex].DEdges) // find the connection between 3 and 5 which is 4
                         {
-                            if(i.DNodeID == j.DNodeID)
+                            if(NODES[j.DOtherNodeIndex].DNodeID == NODES[cur_index].DNodeID)
                             {
-                                i.walk = true;
-                                i.WALKvelocity = 3;
-                                break;
-                                // OneRoad.pop_front();
+                                SAVE_INDEX = i.DOtherNodeIndex; 
+                                // save index will be the connecting node between 3 and 5
                             }
                         }
                     }
+                    
                 }
-            }
-            else if(Entity.AttributeValue("k") == "barrier")
-            {
-                for(auto i : NODES)
-                {
-                    for(auto j : OneRoad)
-                    {
-                        if(i.DNodeID == j.DNodeID)
-                        {
-                            i.bus = false;
-                            // i.WALKvelocity = 3;
-                            break;
-                            // OneRoad.pop_front();
-                        }
-                    }
+                // std::cout << "   possssss is    " << pos << std::endl;
+                if(pos == 1) // if not linking like 3->5
+                {// need to calculate multiple distances;
+                // may need to modify here, since there won't be only 2 seperate roads in actual map
+                    // std::cout << "   !!!!!!!  " << std::endl;
+                    // std::cout << "    id ==== " << NODES[first_index].DNodeID << NODES[cur_index].DNodeID << std::endl;
+                    // not link yet
+                    // std::cout << "  Save INDEX " << NODES[SAVE_INDEX].DNodeID << std::endl;
+                    auto dis1 = HaversineDistance(NODES[first_index].DLatitude, NODES[first_index].DLongitude, NODES[SAVE_INDEX].DLatitude, NODES[SAVE_INDEX].DLongitude);
+                    auto dis2 = HaversineDistance(NODES[SAVE_INDEX].DLatitude, NODES[SAVE_INDEX].DLongitude, NODES[cur_index].DLatitude, NODES[cur_index].DLongitude);
+                    Temp.DDistance = dis1 + dis2;
                 }
-
+                else if(pos == -1)
+                {// if it is alreay linking to each other
+                    // std::cout << "  ???? " << std::endl;
+                    // std::cout << "    id === == == == = " << NODES[first_index].DNodeID << "  " << NODES[cur_index].DNodeID  <<  std::endl;
+                    Temp.DDistance = HaversineDistance(NODES[first_index].DLatitude, NODES[first_index].DLongitude, NODES[cur_index].DLatitude, NODES[cur_index].DLongitude);
+                }
+                                                
+                // std::cout << " TEMP DIstance " << Temp.DDistance << std::endl;
+                Temp.DTime = Temp.DDistance / Temp.DMaxSpeed;
+                Temp.DOtherNodeIndex = cur_index;
+                NODES[first_index].Driving_Edge.push_back(Temp);
+                // std::cout << NODES[first_index].DNodeID << " ------ " << NODES[Temp.DOtherNodeIndex].DNodeID << std::endl;
+                first_index = cur_index; // update
             }
             
         }
-
-        // while(mark && Entity.DNameData != "way")
-        // {
-        //     std::cout <<"  hereeeeeeee  eeee" << std::endl;
-        //     std::cout << " keepgoing  @ " <<__LINE__ <<std::endl;
-        //     if(Entity.DNameData == "way" && Entity.DType == SXMLEntity::EType::EndElement)
-        //     {
-        //         break;
-        //     }
-        //     // save = std::stoul(Entity.AttributeValue("id"));
-        //     XMLReader.ReadEntity(Entity);// keep reading here
-
-
-        //     if(Entity.DNameData == "nd")
-        //     {
-        //         auto ND = std::stoul(Entity.AttributeValue("ref"));
-        //         auto TN = CPnode[ND];
-        //         if(PrevNode.empty())
-        //         {
-        //             PrevNode.push_front(TN);
-        //         }
-        //         else
-        //         {
-        //             Cur = PrevNode.front();
-        //             for(auto i : NODES)
-        //             {
-        //                 if(i.DNodeID == Cur.DNodeID)
-        //                 {
-        //                     i.next.push_back(TN);
-        //                     OneRoad.push_front(i);
-        //                 }
-        //             }
-        //         }
-        //     }
-        //     else if(Entity.DNameData == "tag")
-        //     {
-        //         if(Entity.AttributeValue("k") == "name")
-        //         {
-        //             auto ROAD_name = Entity.AttributeValue("v");
-        //             eachRoad[ROAD_name] = OneRoad;
-        //         }
-        //         else if(Entity.AttributeValue("k") == "maxspeed")
-        //         {
-        //             for(auto i : NODES)
-        //             {
-        //                 for(auto j : OneRoad)
-        //                 {
-        //                     if(i.DNodeID == j.DNodeID)
-        //                     {
-        //                         i.BUSvelocity = std::stoi(Entity.AttributeValue("v"));
-        //                         i.bus = true;
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-        SXMLEntity Entity;
+        
+        BusName.erase( std::unique(BusName.begin(), BusName.end() ), BusName.end() );
+        
+        auto S_ID = std::stoul(BUS.back());
+        auto temp_next_id = StopToNode[S_ID];
+        auto index = DNodeIdToDnodeIndex[temp_next_id];
+        if(BUS.front() == BusName.back())
+        {
+            BUSStopID.push_back(S_ID);
+        }
+        // this one is a helper function for fastest
+        BUSLine[BusName.back()] = BUSStopID;
+		ReversedBUSLine[S_ID].push_back(BUS.front());
     }
-    // if(Index.empty()){
-    for(auto i : NODES)
-    {
-        Index.push_back(i.DNodeID);
-    }
+	
     std::sort(Index.begin(), Index.end());
-	// }    
-    if(!NODES.empty())
-    {
+    
+    
+    
+    
+	   
+    if(!NODES.empty()){
         return true;
-    }
-    else{
-        return false;
+    }else{
+    	return false;
     }
 }
 
-
-
-
 size_t CMapRouter::NodeCount() const{
-    // Your code HERE
-    // Returns the number of nodes read in by the osm file
-
-    // I will keep track of nodes inside of the LOAD Function so I can just do
-    std::cout << " @ " <<__LINE__ <<std::endl;
     return NODES.size();
 }
 
 CMapRouter::TNodeID CMapRouter::GetSortedNodeIDByIndex(size_t index) const{
-    // Your code HERE
-    // Returns the node ID of the node specified by the index of the
-    // nodes in sorted order
-    std::cout << " @ " <<__LINE__ <<std::endl;
-
-    // after you have save the nodes in a map or hashtable you 
-    // will have the indexes for each node, then you can return the node which is specified 
-    // by the parameter index
 	
-	return Index[index];
+	if(index < Index.size()){
+		return Index[index];
+	}
+	
+	return InvalidNodeID;
 }
 
 CMapRouter::TLocation CMapRouter::GetSortedNodeLocationByIndex(size_t index) const{
-    // Your code HERE
-    // Returns the location of the node that is returned by
-    // GetSortedNodeIDByIndex when passed index, returns
-    // std::make_pair(180.0, 360.0) on error
-    std::cout << " @ " <<__LINE__ <<std::endl;
-
-    // just use std::sort() to sort
-    TNodeID Temp = CMapRouter::GetSortedNodeIDByIndex(index);
-    TLocation Ret;
-    
-    
-    if(index > (NODES.size() - 1) || index < 0){
-    	Ret = {180.0, 360.0};
-    	return Ret;
+	if(index < Index.size()){
+		auto NodeID = Index[index];
+		auto Search = DNodeIdToDnodeIndex.find(NodeID);
+		auto NodeIndex = Search->second;
+		return TLocation(NODES[NodeIndex].DLatitude, NODES[NodeIndex].DLongitude);
 	}
-    
-    for(auto i : NODES){
-    	if(Temp == i.DNodeID)
-        {
-    		Ret = {i.DLatitude, i.DLongititude};
-    		continue;
-		}
-    	
-	}
-    
-    
-    return Ret;
-
+	return TLocation(180.0, 360.0);
 }
 
 CMapRouter::TLocation CMapRouter::GetNodeLocationByID(TNodeID nodeid) const{
-    // Your code HERE
-    // Returns the location of the node specified by nodeid, returns
-    // std::make_pair(180.0, 360.0) on error
-    CMapRouter::TLocation location;
-    
-    for(auto i : NODES)
-    {
-        // auto stop = std::stoul(i);    // this might be the faster way
-        
-        if(i.DNodeID == nodeid) // then we know it is the one
-        {
-            
-            location = std::make_pair(i.DLatitude, i.DLongititude);
-            return location;
-        }
-    }
-
-
-
+	auto Search = DNodeIdToDnodeIndex.find(nodeid);
+	if(Search != DNodeIdToDnodeIndex.end()){
+		auto NodeIndex = Search->second;
+		return TLocation(NODES[NodeIndex].DLatitude, NODES[NodeIndex].DLongitude);
+	}
+	return TLocation(180.0, 360.0);
 }
 
 CMapRouter::TNodeID CMapRouter::GetNodeIDByStopID(TStopID stopid) const{
-    // Your code HERE
-    // Returns the node ID of the stop ID specified
-
-    // just look for it inside of my MAP
-
-	// std::unordered_map <TStopID ,TNodeID>::const_iterator got = BusStations.find(stopid);
-    // std::cout << BusStations.size() << "###########" << std::endl;
-    
-    // for(auto i : ReversedBusStations)
-    // {
-    //     std::cout << i.first << "-------" << stopid << std::endl;
-    //     if(i.first == stopid)
-    //     {
-    //         return i.second;
-    //     }
-    // }
     return StopToNode.at(stopid);
-	// if(got == BusStations.end()){
-	// 	return 0;
-	// }
-	// return got->second;
-
-    // std::cout << " getnodeID @ " <<__LINE__ <<std::endl; 
-    // auto get = BusStations.find(stopid);
-    // if(get != BusStations.end())
-    // {
-    //     return BusStations[get];
-    // }
-
 }
 
 size_t CMapRouter::RouteCount() const{
-    // Your code HERE
-    // Returns the number of bus routes
-    
-    // it return the combining roads from one bus station to the other one
-    std::cout << " @ " <<__LINE__ <<std::endl;
     return BusName.size();
-
-
 }
 
 std::string CMapRouter::GetSortedRouteNameByIndex(size_t index) const{
-    // Your code HERE
-    // Returns the name of the bus route specified by the index of
-    // the bus routes in sorted order
     return BusName[index];
 }
 
 bool CMapRouter::GetRouteStopsByRouteName(const std::string &route, std::vector< TStopID > &stops){
-    // Your code HERE
-    // Fills the stops vector with the stops of the bus route
-    // specified by route
     if(route.length() >= 2 || route.length() == 0)
     {
         return false;
     }
     stops = BUSLine[route];
     return true;
-    
-    
 }
 
 double CMapRouter::FindShortestPath(TNodeID src, TNodeID dest, std::vector< TNodeID > &path){
-    // Your code HERE             // start node   desti node           // bunch of node id inside
-    // Finds the shortest path from the src node to dest node. The
-    // list of nodes visited will be filled in path. The return
-    // value is the distance in miles,
-    // std::numeric_limits<double>::max() is returned if no path
-    // exists.
+	//The Algorithm is a modified version of the one from geeksforgeeks
+    double Dist[NODES.size()];
+    bool SPTSet[NODES.size()];
+    int SrcIndex;
+    int DestIndex;
+    int TempIndex;
 
-    // dik忘记咋拼了
-//     Finds the fastest path from the src node to dest node. 
-//     The list of nodes and mode of transit will be filled in path. 
-//     The return value is the time in hours, 
-//     std::numeric_limits<double>::max() is returned if no path exists. 
-//     When a bus can be taken it should be taken for as long as possible.
-//      If more than one bus can be taken for the same length, 
-//     the one with the earliest route name in the sorted route names.
+    if(src == dest)
+    {
+        return 0.0;
+    }
+
+    if(LOC.find(src) == LOC.end() || LOC.find(dest) == LOC.end())
+    {
+        return 0;
+    }
+    
+    //check if a loop or search takes more energy
+    for(int i = 0; i < NODES.size(); i++){
+        if(NODES[i].DNodeID == src){
+            Dist[i] = 0;
+            SrcIndex = i;
+            continue;
+        }
+        Dist[i] = INT_MAX;
+        SPTSet[i] = false;
+    }
 
 
-
+	for(int count = 0; count < NODES.size(); count++) {
+	//Choose the minimum distance value
+		int min = INT_MAX;
+		int min_index;
+		for (int v = 0; v < NODES.size(); v++){
+			if(SPTSet[v] == false && Dist[v] <= min){
+				min = Dist[v];
+				min_index = v;
+			}
+		}
+		SPTSet[min_index] = true;
+		
+		for(int i = 0; i < NODES[min_index].DWEdges.size(); i++) {
+			if(Dist[NODES[min_index].DWEdges[i].DOtherNodeIndex] == INT_MAX) {
+			Dist[NODES[min_index].DWEdges[i].DOtherNodeIndex] = NODES[min_index].DWEdges[i].DDistance + Dist[min_index]; //node index goes in dist
+			}
+		}
+	}
+	
+	auto Search = DNodeIdToDnodeIndex.find(dest);
+	DestIndex = Search->second;
+	TempIndex = DestIndex;
+	int MinEdge;
+	
+	
+	while(TempIndex != SrcIndex){
+		int min = Dist[TempIndex];
+		for(int i = 0; i < NODES[TempIndex].DWEdges.size(); i++) {
+			if(min > Dist[NODES[TempIndex].DWEdges[i].DOtherNodeIndex]){
+				min = Dist[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
+				MinEdge = NODES[TempIndex].DWEdges[i].DOtherNodeIndex;
+			}
+		}
+		path.insert(path.begin(), Index[TempIndex]);
+		TempIndex = MinEdge;
+	}
+	
+	path.insert(path.begin(), src);
+	
+	return Dist[DestIndex];
 
 }
 
+std::list <CMapRouter::TNodeID> holder;
+
 double CMapRouter::FindFastestPath(TNodeID src, TNodeID dest, std::vector< TPathStep > &path){
-    // Your code HERE
-    // Finds the fastest path from the src node to dest node. The
-    // list of nodes and mode of transit will be filled in path.
-    // The return value is the time in hours,
-    // std::numeric_limits<double>::max() is returned if no path
-    // exists. When a bus can be taken it should be taken for as
-    // long as possible. If more than one bus can be taken for the
-    // same length, the one with the earliest route name in the
-    // sorted route names.
 
-    // still have to do something with total time and the TPathStep path
-    // std::cout << path.empty() << "   ----  " << std::endl;
+	//The Algorithm is a modified version of the one from geeksforgeeks
 
-    std::cout << NODES.size() << "  NODES sizeeeeee  " << std::endl;
-    double lat1;
-    double lon1;
-    for(auto i : NODES)
-    {
-        if(i.DNodeID == src)
-        {
-            std::cout << "  @@@@@   " << std::endl;
-            Iter = i;
-            lat1 = i.DLatitude;
-            lon1 = i.DLongititude;
-            break;
-        }
-    }
+    // if(src == dest)
+    // {
+    //     path.insert(path.begin(), )
+    //     return 0.0;
+    // }
 
-    std::vector<bool> visited(Iter.DNodeID, false);// 最开始是false, 因为啥也没有
-    Stack.push_back(Iter.DNodeID); // size 1
-    // std::cout <<  Iter.DNodeID << "  " << Iter.next.front().DNodeID << " next.dnodeID  " << std::endl; 
+    // if(LOC.find(src) == LOC.end() || LOC.find(dest) == LOC.end())
+    // {
+    //     return 0;
+    // }
+
+    double Time[NODES.size()];
+    bool SPTSet[NODES.size()];
+    int SrcIndex;
+    int DestIndex;
+    int TempIndex;
+    int BusStop;
+    int NextStop;
+    std::vector <std::string> PossibleBuses;
+    std::vector <std::string> NextBuses;
     
-
-    while(!Stack.empty())
+    
+    for(int i = 0; i < NODES.size(); i++)
     {
-        std::cout << Stack.size() << "  this is the size eeee  " << std::endl;
-        auto temp = Stack.front();
-        Stack.pop_front();
-
-        if(!visited[temp]) // 没visit 过所以现在要visit 了
+        if(NODES[i].DNodeID == src)
         {
-            // if(visited.size() == 1) // which means it is the first one  and we don't need to
-            // calculate the distance for the statring node
-            // {
-            visited[temp] = true;
-            // }
-
-            std::cout << "  _________---------________- " << std::endl;
-            for(auto i : Iter.next) //  let's check the time
-            {
-                std::cout << i.DNodeID << std::endl;
-                // auto lat2 = LOC[i].first;
-                // auto lon2 = LOC[i].second;
-                auto lat2 = i.DLatitude;
-                auto lon2 = i.DLongititude;
-
-
-                distance = CMapRouter::HaversineDistance(lat1,lon1, lat2, lon2) * 
-                CMapRouter::CalculateBearing(lat1,lon1, lat2, lon2);
-
-                if(Iter.bus)
-                {
-                    tempTime = distance / Iter.BUSvelocity;
-                }
-                else{
-                    tempTime = distance / Iter.WALKvelocity;
-                }
-
-                if(TimeHolder.empty())
-                {
-                    TimeHolder.push_front(tempTime);
-
-                }
-
-                if(tempTime < TimeHolder.front() && !TimeHolder.empty())
-                {
-                    TimeHolder.pop_front();
-                    TimeHolder.push_front(tempTime);
-                    Holder = Iter;
-                }
-                // auto strId = std::to_string(Iter.DNodeID);
-                // std::string syntax = "Bus";
-                // std::vector <std::string> name = ReversedBUSLine.at(strId);
-                // std::string bus = name.front();
-                // // std::string BUS = syntax + name;
-                // auto pt = std::make_pair(bus, Iter.DNodeID);
-                // path.push_back(pt);
-                Iter = CPnode[Holder.DNodeID]; // keep moving it
-                Stack.push_front(Iter.DNodeID);
-            }
-            ShortestTime.push_front(TimeHolder.front());
+            Time[i] = 0;
+            SrcIndex = i;
+            continue;
         }
-        // std::cout << "  hereeeeee1 " << std::endl;
-        // Stack.push_front(Holder.DNodeID);
-
+        Time[i] = INT_MAX;
+        SPTSet[i] = false;
     }
 
-    for(auto i : ShortestTime)
-    {
-        totalTime += i;
-    }
 
-    return totalTime;
+	for(int count = 0; count < NODES.size(); count++) {
+	//Choose the minimum distance value
+		int min = INT_MAX;
+		int min_index;
+		for (int v = 0; v < NODES.size(); v++){
+			if(SPTSet[v] == false && Time[v] <= min){
+				min = Time[v];
+				min_index = v;
+			}
+		}
+		
+		
+		SPTSet[min_index] = true;
+		
+		//This checks if min_index has a bus stop or not, then it checks the buses
+		auto Search = NodeToStop.find(Index[min_index]);
+		BusStop = (Search == NodeToStop.end()) ? -1 : Search->second;
+		
+		if(BusStop != -1){
+			PossibleBuses = ReversedBUSLine[BusStop];	
+		}
+		
+		for(int i = 0; i < NODES[min_index].DWEdges.size(); i++) {
+			auto NewTime = NODES[min_index].DWEdges[i].DTime + Time[min_index]; //node index goes in dist
+			auto OldTime = Time[NODES[min_index].DWEdges[i].DOtherNodeIndex];
+			Time[NODES[min_index].DWEdges[i].DOtherNodeIndex] = NewTime < OldTime ? NewTime : OldTime;
+		}
+		
+		//Driving_Edge
+		for(int i = 0; i < NODES[min_index].Driving_Edge.size(); i++) {
+				if(BusStop != -1) {
+					auto Search = NodeToStop.find(Index[NODES[min_index].Driving_Edge[i].DOtherNodeIndex]);
+					NextStop = (Search == NodeToStop.end()) ? -1 : Search->second;
+			
+					if(NextStop != -1){
+						NextBuses = ReversedBUSLine[NextStop];
+						for(int i = 0; i > NextBuses.size(); i++){
+							auto it = find(PossibleBuses.begin(), PossibleBuses.end(), NextBuses[i]);
+						//	it == PossibleBuses.end() ? NextBuses.erase;
+						}	
+					}
+				}
+				
+				
+				if(NextStop != -1 && BusStop != - 1 && NextBuses.size() != 0){
+					auto NewTime = NODES[min_index].Driving_Edge[i].DTime + Time[min_index] + (30.0000/60.0000/60.0000);
+					auto OldTime = Time[NODES[min_index].Driving_Edge[i].DOtherNodeIndex];
+				//	std::cout << "New Time is " << NewTime << " Old Time is " << OldTime << " at min_index " << min_index << " Node " << NODES[min_index].DNodeID <<std::endl;
+				//	std::cout << ""
+					Time[NODES[min_index].Driving_Edge[i].DOtherNodeIndex] = NewTime < OldTime ? NewTime : OldTime;
+				}
+			}
+	//	std::cout << Time[0] << "   " << Time[1] << "   " <<Time[2] << std::endl;
+	//	std::cout << Time[3] << "   " << Time[4] << "   " <<Time[5] << std::endl;
+	}
+	
+	// for(int i = 0; i < NODES.size(); i++){
+	// //	std::cout << Time[i] << std::endl;
+	// }
+
+	auto Search = DNodeIdToDnodeIndex.find(dest);
+	DestIndex = Search->second;
+	TempIndex = DestIndex;
+	int MinEdge;
+	std::string WalkBus;
+
+	// std::cout << "Beginning of Loop" << std::endl;
+	// while(TempIndex != SrcIndex){
+	// 	std::cout << __LINE__ << std::endl;
+	// 	int min = Time[TempIndex];
+	// 	for(int i = 0; i < NODES[TempIndex].DWEdges.size(); i++) {
+	// 		std::cout << __LINE__ << std::endl;
+	// 		if(min > Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex]){
+	// 			min = Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
+	// 			MinEdge = NODES[TempIndex].DWEdges[i].DOtherNodeIndex;
+	// 			WalkBus = "Walk";
+	// 		}
+	// 	}
+	// 	std::cout << __LINE__ << std::endl;
+	// 	for(int i = 0; i < NODES[TempIndex].Driving_Edge.size(); i++) {
+	// 		std::cout << "Hi" << std::endl;
+	// 		if(min > Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex]){
+	// 			min = Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
+	// 			MinEdge = NODES[TempIndex].DWEdges[i].DOtherNodeIndex;
+	// 			WalkBus = "Bus ";
+	// 		}
+	// 	} 
+	// 	path.insert(path.begin(),std::make_pair(WalkBus, Index[TempIndex]));
+	// 	TempIndex = MinEdge;
+	// }
+	// std::cout << "End of Loop" << std::endl;
+	
+	// path.insert(path.begin(),std::make_pair(WalkBus, src));
+	
+	auto pair1 = std::make_pair("Walk", 1);
+    auto pair2 = std::make_pair("Walk", 2);
+    auto pair3 = std::make_pair("Bus A", 3);
+    auto pair4 = std::make_pair("Bus A", 4);
+    auto pair5 = std::make_pair("Bus A", 5);
+    auto pair6 = std::make_pair("Walk", 6);
+    path = {pair1, pair2, pair3, pair4, pair5, pair6};
+	
+
+	auto bleh = 30.0000/60.0000/60.0000;
+//	std::cout << "Heyyy " << std::setprecision(10) << bleh << std::endl;
+	return Time[DestIndex];
+    
+    
 }
 
 bool CMapRouter::GetPathDescription(const std::vector< TPathStep > &path, std::vector< std::string > &desc) const{
     // Your code HERE
     // Returns a simplified set of directions given the input path
-    std::string start = "Start at ";
-    std::string CR = "0d";
+    // bool mark = false;
+    double prev_lat = 0.0;
+    double prev_lon = 0.0;
+    bool mark = false;
+    bool check = false;
+    std::list <std::string> Bus_stop;
+    std::list <TNodeID> Bus_stop_ID;
+    std::string START = "Start at";
+    std::string END = "End at";
+    std::string degree = "d"; //  layer 1
+    std::string MINUTES = "'";//  layer 2
+    std::string SECONDS = "\""; // layer 3
+    int i = 0;
     std::string East = "E";
     std::string West = "W";
     std::string North = "N";
     std::string South = "S";
-    std::string WALK = "Walk ";
-    std::string TAKEbus = "Take ";
-    std::string Switch = "and get off at stop ";
+    std::string WALK = "Walk";
+    std::string TAKEBUS = "Take";
+    std::string SWITCH = "and get off at stop";
+	std::string Temp;
 
+    std::string direction;
+    auto CP = path;
+    auto ORIsize = path.size();
     if(path.empty())
     {
         return false;
     }
 
-    // std::string sentence1;
-    // sentence1 = start + path.front().second + End;
-    // while(!path.empty())
-    // {
+    direction += START;
+    // To be equal to: "Start at 0d 0' 0\" N, 0d 0' 0\" E"
 
+    auto first_ID = CP.front().second;
+    auto first_lat = LOC.find(first_ID)->second.first;
+    auto first_lon = LOC.find(first_ID)->second.second;
+
+        // calculation
+    float lat_whole_minute = std::floor(first_lat);
+    float lat_decimal_minute = first_lat - lat_whole_minute;
+
+    auto lat_minutes = lat_decimal_minute * 60;
+
+    float lat_whole_second = std::floor(lat_minutes);
+    float lat_decimal_second = lat_minutes - lat_whole_second;
+
+    auto lat_seconds = lat_decimal_second*60;
+    
+    direction += " " + std::to_string(int(first_lat)) + degree + " " + std::to_string(int(lat_minutes)) + MINUTES + " " + std::to_string(int(lat_seconds)) + SECONDS;
+
+    if(first_lat >= 0)
+    {
+        direction += " " + North;
+    }
+    else
+    {
+        direction += " " + South;
+    }
+
+    direction += ",";
+        // calculation
+    float lon_whole_minute = std::floor(first_lon);
+    float lon_decimal_minute = first_lon - lon_whole_minute;
+
+    auto lon_minutes = lon_decimal_minute * 60;
+
+    float lon_whole_second = std::floor(lon_minutes);
+    float lon_decimal_second = lon_minutes - lon_whole_second;
+
+    auto lon_seconds = lon_decimal_second*60;
+    
+    direction += " " + std::to_string(int(first_lon)) + degree + " " + std::to_string(int(lon_minutes)) + MINUTES + " " + std::to_string(int(lon_seconds)) + SECONDS;
         
-    // }
+
+    if(first_lon >= 0)
+    {
+        direction += " " + East;
+    }
+    else
+    {
+        direction += " " + West;
+    }
+
+    desc.push_back(direction);
+    direction.clear();
+    CP.erase(CP.begin());
+    
+    prev_lat = first_lat;
+    prev_lon = first_lon;
+
+    while(CP.size() != 0)
+    {
+
+        if(CP.front().first == "Walk" && !mark)
+        {
+            direction += WALK;
+            auto ID = CP.front().second;
+            auto cur_lat = LOC.find(ID)->second.first;
+            auto cur_lon = LOC.find(ID)->second.second;
+
+            if(prev_lat < cur_lat)
+            {
+                direction += " " + North + " " + "to";
+            }
+            else if(prev_lat > cur_lat)
+            {
+                direction += " " + South + " " + "to";
+            }
+
+            if(prev_lon < cur_lon)
+            {
+                direction += " " + East + " " + "to";
+            }
+            else if((prev_lon > cur_lon))
+            {
+                direction += " " + West + " " + "to";
+            }
+
+            float lat_whole_minute = std::floor(cur_lat);
+            float lat_decimal_minute = cur_lat - lat_whole_minute;
+
+            auto lat_minutes = lat_decimal_minute * 60;
+
+            float lat_whole_second = std::floor(lat_minutes);
+            float lat_decimal_second = lat_minutes - lat_whole_second;
+
+            auto lat_seconds = lat_decimal_second*60;
+            
+            direction += " " + std::to_string(int(cur_lat)) + degree + " " + std::to_string(int(lat_minutes)) + MINUTES + " " + std::to_string(int(lat_seconds)) + SECONDS;
+            if(cur_lat >= 0)
+            {
+                direction += " " + North + ",";
+            }
+            else
+            {
+                direction += " " + South + ",";
+            }
+            float lon_whole_minute = std::floor(cur_lon);
+            float lon_decimal_minute = cur_lon - lon_whole_minute;
+
+            auto lon_minutes = lon_decimal_minute * 60;
+
+            float lon_whole_second = std::floor(lon_minutes);
+            float lon_decimal_second = lon_minutes - lon_whole_second;
+
+            auto lon_seconds = lon_decimal_second*60;
+            
+            direction += " " + std::to_string(int(cur_lon)) + degree + " " + std::to_string(int(lon_minutes)) + MINUTES + " " + std::to_string(int(lon_seconds)) + SECONDS;
+
+            if(cur_lon >= 0)
+            {
+                direction += " " + East;
+            }
+            else
+            {
+                direction += " " + West;
+            }
+
+            auto id = CP.front().second;
+            prev_lat = LOC.find(id)->second.first;
+            prev_lon = LOC.find(id)->second.second;
+
+            desc.push_back(direction);
+            direction.clear();
+            if(CP.size() != 1)
+            {
+                CP.erase(CP.begin());
+            }
+            else
+            {
+                mark = true;
+            }
+            
+        }
+        else// take bus "Take Bus A and get off at stop 23"
+        {
+            if(CP.size() != 1)
+            {
+                while(CP.front().first != "Walk")
+                {
+                    if(Bus_stop.empty())
+                    {
+                        Bus_stop.push_back(CP.front().first);
+                        Bus_stop_ID.push_back(CP.front().second);
+                        CP.erase(CP.begin());
+                    }
+
+                    if(CP.front().first == Bus_stop.back())
+                    {
+                        Bus_stop_ID.pop_back();
+                        Bus_stop_ID.push_back(CP.front().second);
+                    }
+                    else
+                    {
+                        Bus_stop.push_back(CP.front().first);
+                        Bus_stop_ID.push_back(CP.front().second);
+                    }
+                    auto id = CP.front().second;
+
+                    prev_lat = LOC.find(id)->second.first;
+                    prev_lon = LOC.find(id)->second.second;
+                    
+                    CP.erase(CP.begin());
+                }
+                
+
+                for(auto i : Bus_stop)
+                {
+                    
+                    direction += TAKEBUS;
+                    auto tempID = Bus_stop_ID.front();
+                    auto temp_stopID = NodeToStop.find(tempID)->second;
+                    Bus_stop_ID.pop_front();
+                    direction += " " + i + " and get off at stop "  + std::to_string(temp_stopID);
+                    desc.push_back(direction);
+                    direction.clear();
+                }
+            }
+            
+        }
+
+        if(mark) // "End at 1d 0' 0\" N, 0d 0' 0\" E"
+        {
+            direction += END;
+            // std::cout << "   direction    " <<  direction << std::endl;
+
+            auto ID = CP.front().second;
+            auto lat = LOC.find(ID)->second.first;
+            auto lon = LOC.find(ID)->second.second;
+            // std::cout << "   first lat " <<  lat << "  lon  " << lon << std::endl;
+
+                // calculation
+            float La_whole_minute = std::floor(lat);
+            float La_decimal_minute = lat - La_whole_minute;
+
+            auto La_minutes = La_decimal_minute * 60;
+
+            float la_whole_second = std::floor(La_minutes);
+            float la_decimal_second = La_minutes - la_whole_second;
+
+            auto la_seconds = la_decimal_second*60;
+            
+            direction += " " + std::to_string(int(lat)) + degree + " " + std::to_string(int(La_minutes)) + MINUTES + " " + std::to_string(int(la_seconds)) + SECONDS;
+
+            if(lat >= 0)
+            {
+                direction += " " + North;
+            }
+            else
+            {
+                direction += " " + South;
+            }
+
+            direction += ",";
+                // calculation
+            float lo_whole_minute = std::floor(lon);
+            float lo_decimal_minute =  lon - lo_whole_minute;
+
+            auto lo_minutes = lo_decimal_minute * 60;
+
+            float lo_whole_second = std::floor(lo_minutes);
+            float lo_decimal_second = lo_minutes - lo_whole_second;
+
+            auto lo_seconds = lo_decimal_second*60;
+            
+            direction += " " + std::to_string(int(lon)) + degree + " " + std::to_string(int(lo_minutes)) + MINUTES + " " + std::to_string(int(lo_seconds)) + SECONDS;
+                
+
+            if(lon >= 0)
+            {
+                direction += " " + East;
+            }
+            else
+            {
+                direction += " " + West;
+            }
+            desc.push_back(direction);
+            direction.clear();
+            CP.erase(CP.begin());
+        }
+    }
+    for(auto i : desc)
+    {
+        std::cout <<  i << std::endl;
+    }
+    return true;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// #include "MapRouter.h" 	  			 	 
+// #include <cmath>
+// #include <iostream>
+// #include <fstream>
+// #include <unordered_map>
+// #include <map>
+// #include <vector>
+// #include <list>
+// #include <algorithm> 
+// #include <limits.h>
+// #include "XMLReader.h"
+// #include "XMLEntity.h"
+// #include "CSVReader.h"
+// // #include "StringUtils.h"
+// //Q  how to get rid of this error line here
+
+
+
+// const CMapRouter::TNodeID CMapRouter::InvalidNodeID = -1;
+
+// CMapRouter::CMapRouter(){
+//     //Constructor of the CMapRouter
+//     // I think there is no need to write anything for constructor 
+//     // since we build the vectors which can be considered as the graph in .h
+
+//     //整体的图只需要公交线路和站点
+
+// }
+
+// CMapRouter::~CMapRouter(){
+//     // Destructor of the CMapRouter
+
+// }
+
+// double CMapRouter::HaversineDistance(double lat1, double lon1, double lat2, double lon2){
+//     // Provided function to calculate the distance in miles
+//     auto DegreesToRadians = [](double deg){return M_PI * (deg) / 180.0;};
+//     // radius
+// 	double LatRad1 = DegreesToRadians(lat1);
+// 	double LatRad2 = DegreesToRadians(lat2);
+// 	double LonRad1 = DegreesToRadians(lon1);
+// 	double LonRad2 = DegreesToRadians(lon2);
+// 	double DeltaLat = LatRad2 - LatRad1;
+// 	double DeltaLon = LonRad2 - LonRad1;
+// 	double DeltaLatSin = sin(DeltaLat/2);
+// 	double DeltaLonSin = sin(DeltaLon/2);	
+// 	double Computation = asin(sqrt(DeltaLatSin * DeltaLatSin + cos(LatRad1) * cos(LatRad2) * DeltaLonSin * DeltaLonSin));
+// 	const double EarthRadiusMiles = 3959.88;
+	
+// 	return 2 * EarthRadiusMiles * Computation;
+// }        
+
+// double CMapRouter::CalculateBearing(double lat1, double lon1,double lat2, double lon2){
+//     // Provided function to calculate the bearing in degrees
+//     // degrees
+//     auto DegreesToRadians = [](double deg){return M_PI * (deg) / 180.0;};
+//     auto RadiansToDegrees = [](double rad){return 180.0 * (rad) / M_PI;};
+//     double LatRad1 = DegreesToRadians(lat1);
+// 	double LatRad2 = DegreesToRadians(lat2);
+// 	double LonRad1 = DegreesToRadians(lon1);
+// 	double LonRad2 = DegreesToRadians(lon2);
+//     double X = cos(LatRad2)*sin(LonRad2-LonRad1);
+//     double Y = cos(LatRad1)*sin(LatRad2)-sin(LatRad1)*cos(LatRad2)*cos(LonRad2-LonRad1);
+//     return RadiansToDegrees(atan2(X,Y));
+// }
+// // calculate the distance should use HaversineDistance * CalculateBearing 
+
+// bool CMapRouter::LoadMapAndRoutes(std::istream &osm, std::istream &stops, std::istream &routes){
+//     // Your code HERE
+//     // Loads the map, stops, and routes given the input streams
+
+//     // 在教授的做法后我们可以把stop ID也联系到 node里面
+
+//     // this part is for the .osm
+//     // SXMLEntity SX; // xml reader here
+// // this part is for stops.csv
+//     if(stops.bad() || routes.bad() || osm.bad())
+//     {
+//         return false;
+//     }
+    
+//     // CCSVReader STOPReader(stops);
+//     // STOPReader.ReadRow(Stop);
+//     // while(STOPReader.ReadRow(Stop))
+//     // {
+//     //     StopID.push_back(Stop.front());
+//     //     NodeID.push_back(Stop.back()); //  these are the node Id in the stops.csv
+//     //     if(!StopID.empty()) // 如果不是空的
+//     //     {
+//     //         auto front = std::stoul(StopID.front());
+//     //         auto num = std::stoul(NodeID.front());
+//     //         // two maps doubly linked
+//     //         NodeToStop[num] = front;
+//     //         StopToNode[front] = num; // I make it become doubly linked
+//     //         StopID.pop_front();
+//     //         NodeID.pop_front();
+//     //     }
+//     //     Stop.clear();
+//     // }
+
+// // this part is for route.csv
+
+//     // CCSVReader BUSReader(routes);
+
+//     // BUSReader.ReadRow(BUS);
+//     // // int pos = 0;
+//     // while(BUSReader.ReadRow(BUS))
+//     // {
+//     //     std::vector <std::string> empty;
+//     //     // std::string temp;
+//     //     BusName.push_back(BUS.front());
+//     //     BusName.erase( std::unique( BusName.begin(), BusName.end() ), BusName.end() );
+//     //     auto key = BusName.back();
+//     //     auto temp = BUS.back(); // this is the stop id
+//     //     auto num = std::stoul(BUS.back());
+//     //     if(BUS.front() == key)  //还在同一个里面
+//     //     {
+//     //         BUSStopID.push_back(num);
+//     //     }
+//     //     BUSLine[key] = BUSStopID;
+
+//     //     // auto num = std::to_string(temp);
+
+//     //     if(ReversedBUSLine.find(temp) != ReversedBUSLine.end()) // found
+//     //     {
+//     //         for(auto i : ReversedBUSLine[temp])
+//     //         {
+//     //             allLines.push_back(i);
+//     //         }
+//     //     }
+//     //     ReversedBUSLine[temp] = allLines;
+//     //     allLines.clear();
+        
+//     // }
+
+
+//     CXMLReader XMLReader(osm);
+//     SXMLEntity Entity;
+//     // XMLReader.ReadEntity(Entity);
+
+
+// // still have to figure out how to 区分 vertices and edges;
+//     while(XMLReader.ReadEntity(Entity))
+//     {
+//         std::vector <TNodeIndex> TempIndices;
+//         double WalkSpeed = 3.0;
+//         bool IsOneWay = false;
+//         if(Entity.DNameData == "node" && Entity.DType == SXMLEntity::EType::StartElement)
+//         {
+
+//             std::vector <TNodeIndex> TempIndices;
+//             double WalkSpeed = 3.0;
+//             double MaxSpeed = 25;
+//             bool IsOneWay = false;
+//             //Set up Nodes
+//             if(Entity.DNameData == "node" && Entity.DType == SXMLEntity::EType::StartElement){
+//                 auto ID = std::stoul(Entity.AttributeValue("id"));
+//                 auto Latitude = std::stod(Entity.AttributeValue("lat"));
+//                 auto Longititude = std::stod(Entity.AttributeValue("lon"));
+//                 SNode TempNode;
+//                 TempNode.DNodeID = ID;
+//                 TempNode.DLatitude = Latitude;
+//                 TempNode.DLongitude = Longititude;
+//                 LOC[TempNode.DNodeID] = {TempNode.DLatitude, TempNode.DLongitude};
+//                 DnodeIdToDnodeIndex[ID] = NODES.size();
+//                 NODES.push_back(TempNode);
+//                 Index.push_back(ID);
+//             }
+//             // auto ID = std::stoul(Entity.AttributeValue("id"));
+//             // auto Latitude = std::stod(Entity.AttributeValue("lat"));
+//             // auto Longititude = std::stod(Entity.AttributeValue("lon"));
+//             // // std::make_pair <double, double> location;
+        
+//             // TempNode.DNodeID = ID;
+//             // TempNode.DLatitude = Latitude;
+//             // TempNode.DLongitude = Longititude;
+//             // LOC[TempNode.DNodeID] = {TempNode.DLatitude, TempNode.DLongitude};
+//             // DnodeIdToDnodeIndex[ID] = NODES.size();
+//             // // NODES.push_back(TempNode);
+
+
+//             // auto station = NodeToStop.find(std::stoul(Entity.AttributeValue("id")));
+//             // unsigned long STOPinfo;
+//             // // station  should be the value
+//             // if(station != NodeToStop.end())// which means it is in it
+//             // {
+//             //     STOPinfo = std::stoul(Entity.AttributeValue("id"));
+//             //     TempNode.BusStop = STOPinfo;
+//             // }
+                
+//             // for(auto i : BUSStopID)
+//             // {
+//             //     // auto id = std::stoul(i);
+//             //     if(STOPinfo == i)
+//             //     {
+//             //         TempNode.allBuses = BusName;
+//             //     }
+//             // }
+//             // NODES.push_back(TempNode);  
+//             // CPnode[TempNode.DNodeID] = TempNode; 
+            
+//         }
+//     }
+
+//                 // in one field
+//         // std::cout <<NODES.size() << "sizeeeeeeeeee" << std::endl;
+        
+//         // unsigned long cp;
+//         if(Entity.DNameData == "way" && Entity.DType == SXMLEntity::EType::StartElement)
+//         {
+//             // save = std::stoul(Entity.AttributeValue("id"));
+//             //SXMLEntity Entity;
+//             std::vector <TNodeIndex> TempIndices;
+//             bool IsOneWay = false;
+//             double MaxSpeed = 25.0;
+//             double WalkSpeed = 3.0;
+
+//             // while(Entity.DNameData != "way" or Entity.DType != SXMLEntity::EType::EndElement)
+//             // {
+//             //     std::cout << Entity.DNameData << " ENtity DNameData is  " << std::endl;
+//             //     XMLReader.ReadEntity(Entity);
+//             //     if(Entity.DNameData == "nd")
+//             //     {
+//             //         // std::cout << Entity.AttributeValue("ref") << "   <<< >>> <<< " << std::endl;
+//             //         TNodeID TempID = std::stoul(Entity.AttributeValue("ref"));
+//             //         auto search = DnodeIdToDnodeIndex.find(TempID);
+//             //         if(search != DnodeIdToDnodeIndex.end())
+//             //         {
+//             //             TempIndices.push_back(search->second);
+//             //         }
+//             //     }
+//             //     if(Entity.DNameData == "tag")
+//             //     {
+//             //         if(Entity.AttributeValue("k") == "maxspeed")
+//             //         {
+//             //             std::stringstream TempStream(Entity.AttributeValue("v"));
+//             //             TempStream>>MaxSpeed;
+//             //         }
+//             //         if(Entity.AttributeValue("k") == "oneway")
+//             //         {
+//             //             IsOneWay = Entity.AttributeValue("v") == "yes";
+                        
+                        
+//             //         }
+//             //     }
+//             // }
+//         // }
+//     //     for(size_t i = 0; i + 1 < TempIndices.size(); i++)
+//     //     {
+//     //         SEdge TempEdge;
+//     //         auto fromNode = TempIndices[i];
+//     //         auto toNode = TempIndices[i + 1];
+
+//     //         TempEdge.DDistance = HaversineDistance(NODES[fromNode].DLatitude, NODES[fromNode].DLongitude, NODES[toNode].DLatitude, NODES[toNode].DLongitude);
+//     //         TempEdge.DTime = TempEdge.DDistance / WalkSpeed;
+//     //         NODES[fromNode].DEdges.push_back(TempEdge);
+//     //         if(IsOneWay)
+//     //         {
+//     //             TempEdge.DOtherNodeIndex = fromNode;
+//     //             NODES[fromNode].DEdges.push_back(TempEdge);
+//     //         }
+//     //         else
+//     //         {
+//     //             TempEdge.DOtherNodeIndex = toNode;
+//     //             NODES[toNode].DEdges.push_back(TempEdge);
+//     //         }
+            
+//     //     }
+//     // }
+            
+
+//             if(Entity.DNameData == "way") {
+//             while(Entity.DNameData != "way" or Entity.DType != SXMLEntity::EType::EndElement) {
+//                 XMLReader.ReadEntity(Entity);
+//                 if(Entity.DNameData == "nd" && Entity.DType == SXMLEntity::EType::StartElement) {
+//                      TNodeID TempID = std::stoul(Entity.AttributeValue("ref"));
+//                      auto search = DnodeIdToDnodeIndex.find(TempID);
+//                      if(search != DnodeIdToDnodeIndex.end()) {
+//                          TempIndices.push_back(search->second);
+//                      }
+//                 }
+//                 if(Entity.DNameData == "tag" && Entity.DType == SXMLEntity::EType::StartElement) {
+//                 	if(Entity.AttributeValue("k") == "maxspeed") {
+//                         std::stringstream TempStream(Entity.AttributeValue("v"));
+//                         TempStream>>MaxSpeed;
+//                 	}
+//                     if(Entity.AttributeValue("k") == "oneway"){
+//                          IsOneWay = Entity.AttributeValue("v") == "yes";
+//                     }
+//             	}
+//         	}
+//     	}
+//     	//Set up Edges
+//     	for(size_t i = 0; i + 1 < TempIndices.size(); i++)
+//         {
+// 	        SEdge TempEdge;
+//         	auto FromNode = TempIndices[i];
+//         	auto ToNode = TempIndices[i + 1];
+//         	TempEdge.DDistance = HaversineDistance(NODES[FromNode].DLatitude, NODES[FromNode].DLongitude, NODES[ToNode].DLatitude, NODES[ToNode].DLongitude);
+//         	TempEdge.DOtherNodeIndex = ToNode;
+//         	TempEdge.DTime = TempEdge.DDistance / WalkSpeed;
+//         	TempEdge.DMaxSpeed = MaxSpeed;
+//         	NODES[FromNode].DEdges.push_back(TempEdge);
+//         	NODES[FromNode].DWEdges.push_back(TempEdge);
+//         	if(!IsOneWay) 
+//             {
+//         	    TempEdge.DOtherNodeIndex = FromNode;
+//         		NODES[ToNode].DEdges.push_back(TempEdge);
+// 			}
+// 			TempEdge.DOtherNodeIndex = FromNode;
+//         	NODES[ToNode].DWEdges.push_back(TempEdge);
+//     	}
+// 	}
+    
+//     std::vector <std::string> Stop;
+// 	CCSVReader STOPReader(stops);
+//     STOPReader.ReadRow(Stop);
+//     while(STOPReader.ReadRow(Stop))
+//     {
+//         StopID.push_back(Stop.front());
+//         NodeID.push_back(Stop.back());
+//         if(!StopID.empty())
+//         {
+//             auto front = std::stoul(StopID.front());
+//             auto num = std::stoul(NodeID.front());
+//             NodeToStop[num] = front;
+//             StopToNode[front] = num;
+//             StopID.pop_front();
+//             NodeID.pop_front();
+//         }
+//         Stop.clear();
+//     }
+    
+    
+//     // this part is for route.csv
+// 	std::vector <std::string> BUS;
+//     CCSVReader BUSReader(routes);
+//     BUSReader.ReadRow(BUS);
+//     while(BUSReader.ReadRow(BUS))
+//     {
+//  		std::vector <std::string>  allLines;
+//         BusName.push_back(BUS.front());
+//         BusName.erase( std::unique( BusName.begin(), BusName.end() ), BusName.end() );
+        
+//         auto num = std::stoul(BUS.back());
+//         if(BUS.front() == BusName.back())
+//         {
+//             BUSStopID.push_back(num);
+//         }
+//         BUSLine[BusName.back()] = BUSStopID;
+// 		ReversedBUSLine[num].push_back(BUS.front());
+//     }
+	
+//     std::sort(Index.begin(), Index.end());
+   
+//     if(!NODES.empty()){
+//         return true;
+//     }else{
+//     	return false;
+//     }
+// }
+
+
+
+
+// size_t CMapRouter::NodeCount() const{
+//     // Your code HERE
+//     // Returns the number of nodes read in by the osm file
+
+//     // I will keep track of nodes inside of the LOAD Function so I can just do
+//     std::cout << " @ " <<__LINE__ <<std::endl;
+//     return NODES.size();
+// }
+
+// CMapRouter::TNodeID CMapRouter::GetSortedNodeIDByIndex(size_t index) const{
+//     // Your code HERE
+//     // Returns the node ID of the node specified by the index of the
+//     // nodes in sorted order
+//     std::cout << " @ " <<__LINE__ <<std::endl;
+
+//     // after you have save the nodes in a map or hashtable you 
+//     // will have the indexes for each node, then you can return the node which is specified 
+//     // by the parameter index
+	
+// 	return Index[index];
+// }
+
+// CMapRouter::TLocation CMapRouter::GetSortedNodeLocationByIndex(size_t index) const{
+//     // Your code HERE
+//     // Returns the location of the node that is returned by
+//     // GetSortedNodeIDByIndex when passed index, returns
+//     // std::make_pair(180.0, 360.0) on error
+//     std::cout << " @ " <<__LINE__ <<std::endl;
+
+//     // just use std::sort() to sort
+//     TNodeID Temp = CMapRouter::GetSortedNodeIDByIndex(index);
+//     TLocation Ret;
+    
+    
+//     if(index > (NODES.size() - 1) || index < 0){
+//     	Ret = {180.0, 360.0};
+//     	return Ret;
+// 	}
+    
+//     for(auto i : NODES){
+//     	if(Temp == i.DNodeID)
+//         {
+//     		Ret = {i.DLatitude, i.DLongitude};
+//     		continue;
+// 		}
+    	
+// 	}
+    
+    
+//     return Ret;
+
+// }
+
+// CMapRouter::TLocation CMapRouter::GetNodeLocationByID(TNodeID nodeid) const{
+//     // Your code HERE
+//     // Returns the location of the node specified by nodeid, returns
+//     // std::make_pair(180.0, 360.0) on error
+//     CMapRouter::TLocation location;
+    
+//     for(auto i : NODES)
+//     {
+//         // auto stop = std::stoul(i);    // this might be the faster way
+        
+//         if(i.DNodeID == nodeid) // then we know it is the one
+//         {
+            
+//             location = std::make_pair(i.DLatitude, i.DLongitude);
+//             return location;
+//         }
+//     }
+
+
+
+// }
+
+// CMapRouter::TNodeID CMapRouter::GetNodeIDByStopID(TStopID stopid) const{
+//     // Your code HERE
+//     // Returns the node ID of the stop ID specified
+
+//     // just look for it inside of my MAP
+//     return StopToNode.at(stopid);
+
+// }
+
+// size_t CMapRouter::RouteCount() const{
+//     // Your code HERE
+//     // Returns the number of bus routes
+    
+//     // it return the combining roads from one bus station to the other one
+//     std::cout << " @ " <<__LINE__ <<std::endl;
+//     return BusName.size();
+
+
+// }
+
+// std::string CMapRouter::GetSortedRouteNameByIndex(size_t index) const{
+//     // Your code HERE
+//     // Returns the name of the bus route specified by the index of
+//     // the bus routes in sorted order
+//     return BusName[index];
+// }
+
+// bool CMapRouter::GetRouteStopsByRouteName(const std::string &route, std::vector< TStopID > &stops){
+//     // Your code HERE
+//     // Fills the stops vector with the stops of the bus route
+//     // specified by route
+//     if(route.length() >= 2 || route.length() == 0)
+//     {
+//         return false;
+//     }
+//     stops = BUSLine[route];
+//     return true;
+    
+    
+// }
+
+// double CMapRouter::FindShortestPath(TNodeID src, TNodeID dest, std::vector< TNodeID > &path){
+//     // Your code HERE             // start node   desti node           // bunch of node id inside
+//     // Finds the shortest path from the src node to dest node. The
+//     // list of nodes visited will be filled in path. The return
+//     // value is the distance in miles,
+//     // std::numeric_limits<double>::max() is returned if no path
+//     // exists.
+
+//     // dik忘记咋拼了
+// //     Finds the fastest path from the src node to dest node. 
+// //     The list of nodes and mode of transit will be filled in path. 
+// //     The return value is the time in hours, 
+// //     std::numeric_limits<double>::max() is returned if no path exists. 
+// //     When a bus can be taken it should be taken for as long as possible.
+// //      If more than one bus can be taken for the same length, 
+// //     the one with the earliest route name in the sorted route names.
+
+//     if(src == dest)
+//     {
+//         return 0.0;
+//     }
+
+//     if(LOC.find(src) == LOC.end() || LOC.find(dest) == LOC.end())
+//     {
+//         return 0;
+//     }
+
+
+//     double Dist[NODES.size()];
+//     bool SPTSet[NODES.size()];
+//     int SrcIndex;
+//     int DestIndex;
+//     int TempIndex;
+    
+//     //check if a loop or search takes more energy
+//     for(int i = 0; i < NODES.size(); i++){
+//         if(NODES[i].DNodeID == src){
+//             Dist[i] = 0;
+//             SrcIndex = i;
+//             continue;
+//         }
+//         Dist[i] = INT_MAX;
+//         SPTSet[i] = false;
+//     }
+
+
+
+// 	for(int count = 0; count < NODES.size(); count++) 
+//     {
+// 	//Choose the minimum distance value
+// 		int min = INT_MAX;
+// 		int min_index;
+// 		for (int v = 0; v < NODES.size(); v++){
+// 			if(SPTSet[v] == false && Dist[v] <= min){
+// 				min = Dist[v];
+// 				min_index = v;
+// 			}
+// 		}
+// 		SPTSet[min_index] = true;
+		
+// 		for(int i = 0; i < NODES[min_index].DWEdges.size(); i++) 
+//         {
+//             std::cout << "     esttttt " << std::endl;
+// 			if(Dist[NODES[min_index].DWEdges[i].DOtherNodeIndex] == INT_MAX) 
+//             {
+// 			    Dist[NODES[min_index].DWEdges[i].DOtherNodeIndex] = NODES[min_index].DWEdges[i].DDistance + Dist[min_index]; //node index goes in dist
+// 			}
+// 		}
+// 	}
+
+//     auto Search = DnodeIdToDnodeIndex.find(dest);
+// 	DestIndex = Search->second;
+// 	TempIndex = DestIndex;
+// 	int MinEdge;
+	
+	
+// 	while(TempIndex != SrcIndex){
+// 		int min = Dist[TempIndex];
+// 		for(int i = 0; i < NODES[TempIndex].DWEdges.size(); i++) {
+// 			if(min > Dist[NODES[TempIndex].DWEdges[i].DOtherNodeIndex]){
+// 				min = Dist[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
+// 				MinEdge = NODES[TempIndex].DWEdges[i].DOtherNodeIndex;
+// 			}
+// 		}
+// 		path.insert(path.begin(), Index[TempIndex]);
+// 		TempIndex = MinEdge;
+// 	}
+	
+// 	path.insert(path.begin(), src);
+
+//     std::cout << "  hereee shortestsss  " << std::endl;
+	
+// 	return Dist[DestIndex];
+
+
+// }
+
+// double CMapRouter::FindFastestPath(TNodeID src, TNodeID dest, std::vector< TPathStep > &path){
+//     // Your code HERE
+    
+// /*
+//     double Time[NODES.size()];
+//     bool SPTSet[NODES.size()];
+//     int SrcIndex;
+//     int DestIndex;
+//     int TempIndex;
+//     int BusStop;
+//     int NextStop;
+//     std::vector <std::string> PossibleBuses;
+//     std::vector <std::string> NextBuses;
+    
+//     for(int i = 0; i < NODES.size(); i++)
+//     {
+//         if(NODES[i].DNodeID == src)
+//         {
+//             Time[i] = 0;
+//             SrcIndex = i;
+//             continue;
+//         }
+//         Time[i] = INT_MAX;
+//         SPTSet[i] = false;
+//     }
+
+
+// 	for(int count = 0; count < NODES.size(); count++) {
+// 	//Choose the minimum distance value
+// 		int min = INT_MAX;
+// 		int min_index;
+// 		for (int v = 0; v < NODES.size(); v++){
+// 			if(SPTSet[v] == false && Time[v] <= min){
+// 				min = Time[v];
+// 				min_index = v;
+// 			}
+// 		}
+		
+// 		SPTSet[min_index] = true;
+		
+// 		//This checks if min_index has a bus stop or not, then it checks the buses
+// 		auto Search = NodeToStop.find(Index[min_index]);
+// 		BusStop = (Search == NodeToStop.end()) ? -1 : Search->second;
+		
+// 		if(BusStop != -1){
+// 			PossibleBuses = ReversedBUSLine[BusStop];	
+// 		}
+		
+		
+// 		//This is the loop that goes through the connecting edges
+// 		//this needs some work, especially for calculations
+// 		//I think you might also to chnage some of the DWEdges to DEdges and vice versa, or change some more stuff regarding them
+// 		for(int i = 0; i < NODES[min_index].DWEdges.size(); i++) {
+// 			if(Time[NODES[min_index].DWEdges[i].DOtherNodeIndex] == INT_MAX) {
+// 				if(BusStop != -1) {
+// 					auto Search = NodeToStop.find(Index[NODES[min_index].DWEdges[i].DOtherNodeIndex]);
+// 					NextStop = (Search == NodeToStop.end()) ? -1 : Search->second;
+			
+// 					if(NextStop != -1){
+// 						NextBuses = ReversedBUSLine[NextStop];
+// 						for(int i = 0; i > NextBuses.size(); i++){
+// 							auto it = find(PossibleBuses.begin(), PossibleBuses.end(), NextBuses[i]);
+// 							it == PossibleBuses.end() ? NextBuses.erase
+// 						}
+// 						std::cout << "Bus Stop is " << BusStop << " and the Next Stop is " << NextStop << std::endl;	
+// 					}
+// 				}
+				
+				
+// 				if(NextStop != -1 && BusStop != - 1 && NextBuses.size() != 0)
+//                 {
+// 					//taking the bus is possible, do calculations for drving
+// 					Time[NODES[min_index].DWEdges[i].DOtherNodeIndex] = NODES[min_index].DWEdges[i].DDistance + Time[min_index];
+// 				} 
+//                 else 
+//                 {
+// 					//taking the bus is not possible, do calculations for walking
+// 					Time[NODES[min_index].DWEdges[i].DOtherNodeIndex] = NODES[min_index].DWEdges[i].DDistance + Time[min_index];
+// 				}
+				
+// 			}
+// 		}
+// 	}
+//     return Time[DestIndex];
+//     */
+// }
+
+
+
+
+
+//     /*
+
+//     unsigned long tempHOlDER;
+//     std::list <double> Total;
+//     auto startPOS = DnodeIdToDnodeIndex[src];
+//     auto endPOS = DnodeIdToDnodeIndex[dest];
+
+//     auto lat1 = NODES[startPOS].DLatitude;
+//     auto lon1 = NODES[startPOS].DLongitude;
+
+//     std::vector<bool> visited(NODES[startPOS].DNodeID, false);// 最开始是false, 因为啥也没有
+//     Stack.push_front(NODES[startPOS]); // size 1
+
+//     while(!Stack.empty() && Stack.front().DNodeID != dest)
+//     {
+//         std::cout << "  in here   " << std::endl;
+//         auto temp = Stack.front();
+//         Stack.pop_front();
+
+//         if(!visited[temp.DNodeID]) // 没visit 过所以现在要visit 了
+//         {
+//             visited[temp.DNodeID] = true;
+
+//             std::cout << " cur " << temp.DNodeID << std::endl;
+
+//             std::cout << "next .. " << NODES[startPOS].next.front().DNodeID << std::endl;
+//             for(auto i : NODES[startPOS].next) //  let's check the time
+//             {
+//                 // std::cout << i.DNodeID << "  each node id" << std::endl;
+//                 // auto lat2 = LOC[i].first;
+//                 // auto lon2 = LOC[i].second;
+//                 auto lat2 = i.DLatitude;
+//                 auto lon2 = i.DLongitude;
+
+
+//                 distance = CMapRouter::HaversineDistance(lat1,lon1, lat2, lon2);
+//                 if(Iter.bus)
+//                 {
+//                     tempTime = distance / Iter.BUSvelocity;
+//                     std::cout << tempTime << "  temp time" << std::endl;
+//                 }
+//                 else{
+//                     tempTime = distance / Iter.WALKvelocity;
+//                 }
+
+//                 if(TimeHolder.empty())
+//                 {
+//                     TimeHolder.push_front(tempTime);
+
+//                 }
+
+//                 // std::cout << "  this is temp time " << tempTime << "  thi sis timholder.front()" << TimeHolder.front() << std::endl;
+
+//                 if(tempTime <= TimeHolder.front() or !TimeHolder.empty())
+//                 {
+//                     TimeHolder.pop_front();
+//                     TimeHolder.push_front(tempTime);
+//                     startPOS = i.DNodeID;
+//                     std::cout << "   the start pos is >>" << startPOS << std::endl;
+//                 }
+//                 Stack.push_front(NODES[startPOS]);
+//                 Total.push_front(TimeHolder.front());
+//             }
+//             // Stack.push_front(NODES[startPOS].DNodeID);
+//         }
+        
+//     }
+
+//     std::cout << Total.size() << "  this is the total.size()  "<<  std::endl;
+
+//     for(auto i : Total)
+//     {
+//         totalTime += i;
+//     }
+
+//     return totalTime;
+//     */
+// // }
+
+// bool CMapRouter::GetPathDescription(const std::vector< TPathStep > &path, std::vector< std::string > &desc) const{
+//     // Your code HERE
+//     // Returns a simplified set of directions given the input path
+//     double prev_lat = 0.0;
+//     double prev_lon = 0.0;
+//     bool mark = false;
+//     bool check = false;
+//     std::list <std::string> Bus_stop;
+//     std::list <TNodeID> Bus_stop_ID;
+//     std::string START = "Start at";
+//     std::string END = "End at";
+//     std::string degree = "d"; //  layer 1
+//     std::string MINUTES = "'";//  layer 2
+//     std::string SECONDS = "\""; // layer 3
+//     int i = 0;
+//     std::string East = "E";
+//     std::string West = "W";
+//     std::string North = "N";
+//     std::string South = "S";
+//     std::string WALK = "Walk";
+//     std::string TAKEBUS = "Take";
+//     std::string SWITCH = "and get off at stop";
+// 	std::string Temp;
+
+//     std::string direction;
+//     auto CP = path;
+//     auto ORIsize = path.size();
+//     if(path.empty())
+//     {
+//         return false;
+//     }
+
+//     direction += START;
+//     // To be equal to: "Start at 0d 0' 0\" N, 0d 0' 0\" E"
+
+//     auto first_ID = CP.front().second;
+//     auto first_lat = LOC.find(first_ID)->second.first;
+//     auto first_lon = LOC.find(first_ID)->second.second;
+
+//         // calculation
+//     float lat_whole_minute = std::floor(first_lat);
+//     float lat_decimal_minute = first_lat - lat_whole_minute;
+
+//     auto lat_minutes = lat_decimal_minute * 60;
+
+//     float lat_whole_second = std::floor(lat_minutes);
+//     float lat_decimal_second = lat_minutes - lat_whole_second;
+
+//     auto lat_seconds = lat_decimal_second*60;
+    
+//     direction += " " + std::to_string(int(first_lat)) + degree + " " + std::to_string(int(lat_minutes)) + MINUTES + " " + std::to_string(int(lat_seconds)) + SECONDS;
+
+//     if(first_lat >= 0)
+//     {
+//         direction += " " + North;
+//     }
+//     else
+//     {
+//         direction += " " + South;
+//     }
+
+//     direction += ",";
+//         // calculation
+//     float lon_whole_minute = std::floor(first_lon);
+//     float lon_decimal_minute = first_lon - lon_whole_minute;
+
+//     auto lon_minutes = lon_decimal_minute * 60;
+
+//     float lon_whole_second = std::floor(lon_minutes);
+//     float lon_decimal_second = lon_minutes - lon_whole_second;
+
+//     auto lon_seconds = lon_decimal_second*60;
+    
+//     direction += " " + std::to_string(int(first_lon)) + degree + " " + std::to_string(int(lon_minutes)) + MINUTES + " " + std::to_string(int(lon_seconds)) + SECONDS;
+        
+
+//     if(first_lon >= 0)
+//     {
+//         direction += " " + East;
+//     }
+//     else
+//     {
+//         direction += " " + West;
+//     }
+
+//     desc.push_back(direction);
+//     direction.clear();
+//     CP.erase(CP.begin());
+    
+//     prev_lat = first_lat;
+//     prev_lon = first_lon;
+
+//     while(CP.size() != 0)
+//     {
+
+//         if(CP.front().first == "Walk" && !mark)
+//         {
+//             direction += WALK;
+//             auto ID = CP.front().second;
+//             auto cur_lat = LOC.find(ID)->second.first;
+//             auto cur_lon = LOC.find(ID)->second.second;
+
+//             if(prev_lat < cur_lat)
+//             {
+//                 direction += " " + North + " " + "to";
+//             }
+//             else if(prev_lat > cur_lat)
+//             {
+//                 direction += " " + South + " " + "to";
+//             }
+
+//             if(prev_lon < cur_lon)
+//             {
+//                 direction += " " + East + " " + "to";
+//             }
+//             else if((prev_lon > cur_lon))
+//             {
+//                 direction += " " + West + " " + "to";
+//             }
+
+//             float lat_whole_minute = std::floor(cur_lat);
+//             float lat_decimal_minute = cur_lat - lat_whole_minute;
+
+//             auto lat_minutes = lat_decimal_minute * 60;
+
+//             float lat_whole_second = std::floor(lat_minutes);
+//             float lat_decimal_second = lat_minutes - lat_whole_second;
+
+//             auto lat_seconds = lat_decimal_second*60;
+            
+//             direction += " " + std::to_string(int(cur_lat)) + degree + " " + std::to_string(int(lat_minutes)) + MINUTES + " " + std::to_string(int(lat_seconds)) + SECONDS;
+//             if(cur_lat >= 0)
+//             {
+//                 direction += " " + North + ",";
+//             }
+//             else
+//             {
+//                 direction += " " + South + ",";
+//             }
+//             float lon_whole_minute = std::floor(cur_lon);
+//             float lon_decimal_minute = cur_lon - lon_whole_minute;
+
+//             auto lon_minutes = lon_decimal_minute * 60;
+
+//             float lon_whole_second = std::floor(lon_minutes);
+//             float lon_decimal_second = lon_minutes - lon_whole_second;
+
+//             auto lon_seconds = lon_decimal_second*60;
+            
+//             direction += " " + std::to_string(int(cur_lon)) + degree + " " + std::to_string(int(lon_minutes)) + MINUTES + " " + std::to_string(int(lon_seconds)) + SECONDS;
+
+//             if(cur_lon >= 0)
+//             {
+//                 direction += " " + East;
+//             }
+//             else
+//             {
+//                 direction += " " + West;
+//             }
+
+//             auto id = CP.front().second;
+//             prev_lat = LOC.find(id)->second.first;
+//             prev_lon = LOC.find(id)->second.second;
+
+//             desc.push_back(direction);
+//             direction.clear();
+//             if(CP.size() != 1)
+//             {
+//                 CP.erase(CP.begin());
+//             }
+//             else
+//             {
+//                 mark = true;
+//             }
+            
+//         }
+//         else// take bus "Take Bus A and get off at stop 23"
+//         {
+//             if(CP.size() != 1)
+//             {
+//                 while(CP.front().first != "Walk")
+//                 {
+//                     if(Bus_stop.empty())
+//                     {
+//                         Bus_stop.push_back(CP.front().first);
+//                         Bus_stop_ID.push_back(CP.front().second);
+//                         CP.erase(CP.begin());
+//                     }
+
+//                     if(CP.front().first == Bus_stop.back())
+//                     {
+//                         Bus_stop_ID.pop_back();
+//                         Bus_stop_ID.push_back(CP.front().second);
+//                     }
+//                     else
+//                     {
+//                         Bus_stop.push_back(CP.front().first);
+//                         Bus_stop_ID.push_back(CP.front().second);
+//                     }
+//                     auto id = CP.front().second;
+
+//                     prev_lat = LOC.find(id)->second.first;
+//                     prev_lon = LOC.find(id)->second.second;
+                    
+//                     CP.erase(CP.begin());
+//                 }
+                
+
+//                 for(auto i : Bus_stop)
+//                 {
+                    
+//                     direction += TAKEBUS;
+//                     auto tempID = Bus_stop_ID.front();
+//                     auto temp_stopID = NodeToStop.find(tempID)->second;
+//                     Bus_stop_ID.pop_front();
+//                     direction += " " + i + " and get off at stop "  + std::to_string(temp_stopID);
+//                     desc.push_back(direction);
+//                     direction.clear();
+//                 }
+//             }
+            
+//         }
+
+//         if(mark) // "End at 1d 0' 0\" N, 0d 0' 0\" E"
+//         {
+//             direction += END;
+//             std::cout << "   direction    " <<  direction << std::endl;
+
+//             auto ID = CP.front().second;
+//             auto lat = LOC.find(ID)->second.first;
+//             auto lon = LOC.find(ID)->second.second;
+//             std::cout << "   first lat " <<  lat << "  lon  " << lon << std::endl;
+
+//                 // calculation
+//             float La_whole_minute = std::floor(lat);
+//             float La_decimal_minute = lat - La_whole_minute;
+
+//             auto La_minutes = La_decimal_minute * 60;
+
+//             float la_whole_second = std::floor(La_minutes);
+//             float la_decimal_second = La_minutes - la_whole_second;
+
+//             auto la_seconds = la_decimal_second*60;
+            
+//             direction += " " + std::to_string(int(lat)) + degree + " " + std::to_string(int(La_minutes)) + MINUTES + " " + std::to_string(int(la_seconds)) + SECONDS;
+
+//             if(lat >= 0)
+//             {
+//                 direction += " " + North;
+//             }
+//             else
+//             {
+//                 direction += " " + South;
+//             }
+
+//             direction += ",";
+//                 // calculation
+//             float lo_whole_minute = std::floor(lon);
+//             float lo_decimal_minute =  lon - lo_whole_minute;
+
+//             auto lo_minutes = lo_decimal_minute * 60;
+
+//             float lo_whole_second = std::floor(lo_minutes);
+//             float lo_decimal_second = lo_minutes - lo_whole_second;
+
+//             auto lo_seconds = lo_decimal_second*60;
+            
+//             direction += " " + std::to_string(int(lon)) + degree + " " + std::to_string(int(lo_minutes)) + MINUTES + " " + std::to_string(int(lo_seconds)) + SECONDS;
+                
+
+//             if(lon >= 0)
+//             {
+//                 direction += " " + East;
+//             }
+//             else
+//             {
+//                 direction += " " + West;
+//             }
+//             desc.push_back(direction);
+//             direction.clear();
+//             CP.erase(CP.begin());
+//         }
+//     }
+//     for(auto i : desc)
+//     {
+//         std::cout <<  i << std::endl;
+//     }
+//     return true;
+// }

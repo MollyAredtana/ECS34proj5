@@ -15,7 +15,7 @@ class CCSVReader{
     protected:
         // std::istream &input;
         // unsigned char c;
-        char TempData[20000];
+        char TempData[200000];
         size_t ByteReads;
         CCSVReader *c = 0; /// need to understand what is it doing here
         unsigned char start = 0;
