@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
 
     std::vector <std::string> holder;
     holder = StringUtils::Split(input, " ");
-    std::cout << "  hodler  size  isss " << holder.size() << std::endl;
+    // std::cout << "  hodler  size  isss " << holder.size() << std::endl;
     for(auto i : holder)
     {
         all_Commands.push_back(i);
@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
             if(holder.size() > 2)
             {
                 holder.erase(holder.begin());
-                std::cout << "sizeeeee is   " << holder.size() << std::endl;
+                // std::cout << "sizeeeee is   " << holder.size() << std::endl;
                 auto string = shortestPATH(holder);
                 std::cout << string << std::endl;
             }
@@ -273,7 +273,7 @@ std::string LOADING(std::vector <std::string> First_commands)
         std::ifstream routes(ROUTE);
         std::ifstream osm(DAVIS);
         Map.LoadMapAndRoutes(osm, stops, routes);
-        std::cout << "   finished loading  " << std::endl;
+        // std::cout << "   finished loading  " << std::endl;
         first_load = true;
     }
 }
@@ -284,8 +284,6 @@ std::string help()
     std::cout << "------------------------------------------------------------------------" << std::endl;;
     std::string MENU = "help     Display this help menu\nexit     Exit the program\ncount    Output the number of nodes in the map\nnode     Syntax \"node [0, count)\"\n        Will output node ID and Lat/Lon for node\nfastest  Syntax \"fastest start end\"\n         Calculates the time for fastest path from start to end\nshortest Syntax \"shortest start end\"\n         Calculates the distance for the shortest path from start to end\nsave     Saves the last calculated path to file\nprint    Prints the steps for the last calculated path";
     std::cout << MENU << std::endl;
-    // return MENU;
-    // return "help     Display this help menu\nexit     Exit the program\ncount    Output the number of nodes in the map\nnode     Syntax \"node [0, count)\"\n        Will output node ID and Lat/Lon for node\nfastest  Syntax \"fastest start end\"\n         Calculates the time for fastest path from start to end\nshortest Syntax \"shortest start end\"\n         Calculates the distance for the shortest path from start to end\nsave     Saves the last calculated path to file\nprint    Prints the steps for the last calculated path";
 }
 
 std::string NODE(std::vector <std::string> holder) //  think about this one later
@@ -333,10 +331,6 @@ std::string fastestPATH(std::vector <std::string> holder)
     {
         return "Fastest path takes 0.0sec";
     }
-    // if(holder.size() == 1 || holder.size() == 0)
-    // {
-    //     return "Invalid fastest command, see help.";
-    // }
     // may have to translate them to hours and minutes and secs
     auto time = Map.FindFastestPath(begin, back, Path);
     std::string tempTime;
@@ -559,14 +553,13 @@ std::string PUTIN(void)
     {
         read (STDIN_FILENO, &c, 1);
         input1 += c;
-        if (c == '^[A') 
+        if (c == '\004')  
+        {
+            break;
+        }        
+        else if (c == '^[A') 
         {
             down = false;
-            // how do you go up and down?
-            // since you have to have one container saving all the things here, 
-            // this one is only for putting chars
-            // probally this one is for left and right
-            // go up
             pos1--;
             if(pos1 != -1)
             {
