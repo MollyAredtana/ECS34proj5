@@ -36,10 +36,11 @@ class CMapRouter{
         struct SEdge
         {
             TNodeIndex DOtherNodeIndex;
-            // std::unordered_map <std:: < TNodeID, TNodeID>, std::vector<std::string>> ID_to_Name;
             double DDistance;
-            double DTime = 0.0;
+            double DTime;
             double DMaxSpeed;
+            std::vector <TNodeIndex> SaveBetween; //Holds the Stops that are passed over
+            int PassStops = 0; //Check if Stops are passed over
         };
 
         struct SNode
@@ -47,19 +48,18 @@ class CMapRouter{
             TNodeID DNodeID;
             double DLatitude;
             double DLongitude;
-            std::list <TStopID> BusStop;
-            std::list <std::string> RouteName;
-            bool takeBUS = false;
+            TStopID BusStop;
             std::vector <SEdge> DEdges; //Driving Edges
             std::vector <SEdge> DWEdges; //Walking Edges
             std::vector <SEdge> Driving_Edge;
+            std::unordered_map <TNodeIndex, TNodeIndex> BusNodeToNode;
         };
-        // SNode TempNode;
+        
         std::vector <SNode> NODES;
                 
     public:
         std::unordered_map <TNodeID ,std::pair <double, double>> LOC;
-        std::unordered_map <TNodeID, TNodeIndex> DNodeIdToDnodeIndex;
+        std::unordered_map <TNodeID, TNodeIndex> DNodeIDToNodeIndex;
         CMapRouter();
         ~CMapRouter();
         

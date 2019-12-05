@@ -59,7 +59,6 @@ bool CMapRouter::LoadMapAndRoutes(std::istream &osm, std::istream &stops, std::i
     if(stops.bad() || routes.bad() || osm.bad()){
         return false;
     }
-
     
     CXMLReader XMLReader(osm);
     SXMLEntity Entity;
@@ -78,20 +77,22 @@ bool CMapRouter::LoadMapAndRoutes(std::istream &osm, std::istream &stops, std::i
             TempNode.DLatitude = Latitude;
             TempNode.DLongitude = Longititude;
             LOC[TempNode.DNodeID] = {TempNode.DLatitude, TempNode.DLongitude};
-            DNodeIdToDnodeIndex[ID] = NODES.size();
+            DNodeIDToNodeIndex[ID] = NODES.size();
         	NODES.push_back(TempNode);
+            // std::cout << "@ " << __LINE__ << "   " << NODES.size() << std::endl;
         	Index.push_back(ID);
 		}
 		//Set up Road Information
     	if(Entity.DNameData == "way") {
+            // std::cout << " @ " << __LINE__ << std::endl;
             while(Entity.DNameData != "way" or Entity.DType != SXMLEntity::EType::EndElement) {
                 XMLReader.ReadEntity(Entity);
+                
                 if(Entity.DNameData == "nd" && Entity.DType == SXMLEntity::EType::StartElement) {
-                     auto TempID = std::stoul(Entity.AttributeValue("ref"));
-                    //  std::cout << "  ID IS " << TempID << std::endl;
-                     auto search = DNodeIdToDnodeIndex.find(TempID);
-                     if(search != DNodeIdToDnodeIndex.end()) {
-                        TempIndices.push_back(search->second);
+                     TNodeID TempID = std::stoul(Entity.AttributeValue("ref"));
+                     auto search = DNodeIDToNodeIndex.find(TempID);
+                     if(search != DNodeIDToNodeIndex.end()) {
+                         TempIndices.push_back(search->second);
                      }
                 }
                 if(Entity.DNameData == "tag" && Entity.DType == SXMLEntity::EType::StartElement) {
@@ -100,7 +101,7 @@ bool CMapRouter::LoadMapAndRoutes(std::istream &osm, std::istream &stops, std::i
                         TempStream>>MaxSpeed;
                 	}
                     if(Entity.AttributeValue("k") == "oneway"){
-                        IsOneWay = Entity.AttributeValue("v") == "yes";
+                         IsOneWay = Entity.AttributeValue("v") == "yes";
                     }
             	}
         	}
@@ -114,184 +115,171 @@ bool CMapRouter::LoadMapAndRoutes(std::istream &osm, std::istream &stops, std::i
         	TempEdge.DOtherNodeIndex = ToNode;
         	TempEdge.DTime = TempEdge.DDistance / WalkSpeed;
         	TempEdge.DMaxSpeed = MaxSpeed;
-            // TempEdge.ID_to_Name[FromNode, ToNode] =
         	NODES[FromNode].DEdges.push_back(TempEdge);
         	NODES[FromNode].DWEdges.push_back(TempEdge);
-            // std::cout << "  from node " << NODES[FromNode].DNodeID <<  "  to node>> " << NODES[ToNode].DNodeID << std::endl;
-
-            // std::cout << NODES[FromNode].DNodeID << "  dnode id " << std::endl;
-        	if(!IsOneWay) 
-            { // two ways
+        	if(!IsOneWay) {
         		TempEdge.DOtherNodeIndex = FromNode;
         		NODES[ToNode].DEdges.push_back(TempEdge);
-
-                // SEdge TempEdge;
-                // TempEdge.DOtherNodeIndex = ToNode;
-                // NODES[FromNode].DEdges.push_back(TempEdge);
 			}
-            // is one way
 			TempEdge.DOtherNodeIndex = FromNode;
         	NODES[ToNode].DWEdges.push_back(TempEdge);
-            // TempEdge.DOtherNodeIndex = ToNode;
-        	// NODES[FromNode].DWEdges.push_back(TempEdge);
     	}
 	}
-	// std::cout << "  22222ooooo " << std::endl;
+	
 	std::vector <std::string> Stop;
 	CCSVReader STOPReader(stops);
-    // std::cout << "  sizeeee is " << stops.gcount() << std::endl;
     STOPReader.ReadRow(Stop);
-    Stop.clear();
-    // std::cout << "  stop first info " << Stop.front() << "   " << Stop.back( ) << std::endl;
-    while(STOPReader.ReadRow(Stop))// while it is reading the file which means it does not read the end
+    while(STOPReader.ReadRow(Stop))
     {
-        // STOPReader.ReadRow(Stop);
-        StopID.push_back(Stop.front()); // use stop id to save the stop so we can match them in if
-        NodeID.push_back(Stop.back()); // same purpose
-        if(!StopID.empty()) // if we still have stop id to read
+        StopID.push_back(Stop.front());
+        NodeID.push_back(Stop.back());
+        if(!StopID.empty())
         {
-            auto S_ID = std::stoul(StopID.front()); //  stop id
-            auto N_ID = std::stoul(NodeID.front());// node id
-            NodeToStop[N_ID] = S_ID; // create a map, from node to stop
-            auto iter = DNodeIdToDnodeIndex[N_ID]; // find the index if the current node id
-            NODES[iter].takeBUS = true;// may not be required
-            NODES[iter].BusStop.push_back(S_ID); // each  id contains several bus routes
-            StopToNode[S_ID] = N_ID; // stop to node
-            StopID.pop_front(); // pop so we can always get the front()
-            NodeID.pop_front(); //  pop
+            auto front = std::stoul(StopID.front());
+            auto num = std::stoul(NodeID.front());
+            NodeToStop[num] = front;
+            StopToNode[front] = num;
+            StopID.pop_front();
+            NodeID.pop_front();
         }
-        // Stop.clear();
-        // std::cout << "  heeeeeee " << std::endl;
+        Stop.clear();
     }
     
-    // std::cout << "    passssed   " << std::endl;
-    // this part is for route.csv
-    // std::string bus_name = "";
+
 	std::vector <std::string> BUS;
-    // std::list <TStopID> tempID;
-    // bool keep;
     auto pos = 0;
-    auto count = 0;
-    double TIME;
+//    auto count = 0;
+//    double TIME;
     double DISTANCE;
-    unsigned long SAVE_INDEX;
-    // size_t place = 0;
+    std::vector <unsigned long> SAVE_INDEX;
     TNodeID first_id;
     TNodeID first_index;
     std::list<TNodeID> STOP_id;
     std::map <std::string, std::list<TNodeID>> MAP;
     CCSVReader BUSReader(routes);
     BUSReader.ReadRow(BUS);
+    // std::sort(StopToNode.begin(), StopToNode.end());
     while(BUSReader.ReadRow(BUS))
     {
- 		std::vector <std::string>  allLines;
+ 	//	std::vector <std::string>  allLines;
         BusName.push_back(BUS.front());
-        //first_id = BUS.back();
-        //first_index = DNodeIdToDnodeIndex[first_id]
-        //if(NODES[first_index])
-//      if(MAP.empty() && )
         if(MAP.empty()) // the very first start since the map is empty
         {
             STOP_id.push_back(std::stoul(BUS.back()));
             MAP[BUS.front()] = STOP_id;
             first_id = StopToNode[MAP[BUS.front()].front()]; // the first_id is the starting node
-            first_index = DNodeIdToDnodeIndex[first_id]; //  index of it
+            first_index = DNodeIDToNodeIndex[first_id]; //  index of it
             // for the testrouter , it will be 2, 3
-        }
-        else
-        {
-            bool check; // no need to use it
+        } else	{
             STOP_id.push_back(std::stoul(BUS.back())); // stop id push back one more, it is 2, 3 inside
-            MAP[BUS.front()] = STOP_id; 
+            MAP[BUS.front()] = STOP_id;
             MAP[BUS.front()].pop_front();
             STOP_id.pop_front(); //  pop 2
             auto cur_id = StopToNode[MAP[BUS.front()].front()]; //  cur will be 3 and 5
-            // std::cout << cur_id << "  cur_id isss  " << std::endl;
-            auto cur_index = DNodeIdToDnodeIndex[cur_id];
-
-
-            
+            auto cur_index = DNodeIDToNodeIndex[cur_id];
             if(NODES[first_index].DNodeID != NODES[cur_index].DNodeID)
             { // if the starting node is not the end one
-                
-                
                 SEdge Temp;
-                Temp.DMaxSpeed = 25;  // speed
-                // std::cout << "  first index -- >> " << NODES[first_index].DNodeID <<"    " <<  NODES[cur_index].DNodeID <<std::endl;
-                for(auto i : NODES[first_index].DEdges) // to check is there any jumping between start node and end node
+                Temp.DMaxSpeed = 25; //speed
+                for(auto i : NODES[first_index].DEdges)
                 {
-                    // std::cout << NODES[i.DOtherNodeIndex].DNodeID << "   i dnode id " <<  NODES[cur_index].DNodeID   <<  std::endl;
-
                     if(NODES[i.DOtherNodeIndex].DNodeID == NODES[cur_index].DNodeID) // found
                     {
-                        // if start is linking to end , ex: 2->3
-                        // std::cout << NODES[i.DOtherNodeIndex].DNodeID << "   i dnode id " <<  NODES[cur_index].DNodeID   <<  std::endl;
-
+                    	// if start is linking to end , ex: 2->3
                         pos = -1;
-                        // std::cout << "  breakkkkkkkkkkk  " << std::endl;
                         break;
                     }
-                    else
+                    else 
                     {
-                        // ex 3->5
-                        // std::cout << "    hiiiiiiiiii  " << count << std::endl;
-
-                        // std::cout << NODES[i.DOtherNodeIndex].DNodeID << "   i dnode id " <<  NODES[cur_index].DNodeID   <<  std::endl;
-
+                    	// ex 3->5
                         pos = 1;
-                        for(auto j : NODES[i.DOtherNodeIndex].DEdges) // find the connection between 3 and 5 which is 4
+                        // for(auto j : NODES[i.DOtherNodeIndex].DEdges) // find the connection between 3 and 5 which is 4
+
+                        for(auto j : StopToNode)
                         {
-                            if(NODES[j.DOtherNodeIndex].DNodeID == NODES[cur_index].DNodeID)
+                            // std::cout << "    STOPTONODE " << std::endl;
+                            // std::cout << j.second << "  j.second  " << std::endl;
+
+                            if(j.second != NODES[first_index].DNodeID || j.second == NODES[cur_index].DNodeID)
                             {
-                                SAVE_INDEX = i.DOtherNodeIndex; 
-                                // save index will be the connecting node between 3 and 5
+                                // std::cout << "  cur index id is " << NODES[cur_index].DNodeID << std::endl;
+                                if(j.second != NODES[cur_index].DNodeID && j.second != NODES[first_index].DNodeID && j.second < NODES[cur_index].DNodeID && j.second > NODES[first_index].DNodeID)
+                                {
+                                    SAVE_INDEX.push_back(DNodeIDToNodeIndex[j.second]);
+                                    // std::cout << j.second << "  j.second  " << std::endl;
+                                    // std::cout << SAVE_INDEX.front() << "  save index front is " << "  size is  " << SAVE_INDEX.size() << std::endl;
+                                }
                             }
+                            // if(NODES[j.DOtherNodeIndex].DNodeID == NODES[cur_index].DNodeID)
+                            // {
+                            //     SAVE_INDEX = i.DOtherNodeIndex;
+                            //     // save index will be the connecting node between 3 and 5
+                            // }
                         }
-                    }
-                    
+                    } 
                 }
-                // std::cout << "   possssss is    " << pos << std::endl;
                 if(pos == 1) // if not linking like 3->5
                 {// need to calculate multiple distances;
                 // may need to modify here, since there won't be only 2 seperate roads in actual map
-                    // std::cout << "   !!!!!!!  " << std::endl;
-                    // std::cout << "    id ==== " << NODES[first_index].DNodeID << NODES[cur_index].DNodeID << std::endl;
-                    // not link yet
-                    // std::cout << "  Save INDEX " << NODES[SAVE_INDEX].DNodeID << std::endl;
-                    auto dis1 = HaversineDistance(NODES[first_index].DLatitude, NODES[first_index].DLongitude, NODES[SAVE_INDEX].DLatitude, NODES[SAVE_INDEX].DLongitude);
-                    auto dis2 = HaversineDistance(NODES[SAVE_INDEX].DLatitude, NODES[SAVE_INDEX].DLongitude, NODES[cur_index].DLatitude, NODES[cur_index].DLongitude);
-                    Temp.DDistance = dis1 + dis2;
-                }
+                    // std::cout << "______________________--------------------_______" << std::endl;
+                    size_t count = 0;
+                    SAVE_INDEX.push_back(cur_index);
+                    while(count < SAVE_INDEX.size())
+                    { 
+                        // std::cout << "  first id is " << NODES[first_index].DNodeID << "  cur id is  " << NODES[cur_index].DNodeID << std::endl;
+                        DISTANCE += HaversineDistance(NODES[first_index].DLatitude, NODES[first_index].DLongitude, NODES[SAVE_INDEX[count]].DLatitude, NODES[SAVE_INDEX[count]].DLongitude);
+                        Temp.DDistance = DISTANCE;
+                        // std::cout << DISTANCE << "  3->5 " << std::endl;
+                        Temp.SaveBetween.push_back(SAVE_INDEX[count]);
+                        first_index =  SAVE_INDEX[count];
+                        count++;
+                    }
+                    // auto dis1 = HaversineDistance(NODES[first_index].DLatitude, NODES[first_index].DLongitude, NODES[SAVE_INDEX].DLatitude, NODES[SAVE_INDEX].DLongitude);
+                    // auto dis2 = HaversineDistance(NODES[SAVE_INDEX].DLatitude, NODES[SAVE_INDEX].DLongitude, NODES[cur_index].DLatitude, NODES[cur_index].DLongitude);
+                    // DISTANCE += dis1 + dis2;
+                    // Temp.DDistance = dis1 + dis2;
+                    NODES[cur_index].BusNodeToNode[cur_index] = first_index; //Map is done here
+                    // Temp.SaveBetween.push_back(SAVE_INDEX);
+                    Temp.PassStops = Temp.SaveBetween.size();
+                } 
                 else if(pos == -1)
-                {// if it is alreay linking to each other
-                    // std::cout << "  ???? " << std::endl;
-                    // std::cout << "    id === == == == = " << NODES[first_index].DNodeID << "  " << NODES[cur_index].DNodeID  <<  std::endl;
+                {
+                	// if it is alreay linking to each other
+                    // std::cout << "  first id is " << NODES[first_index].DNodeID << "  cur id is  " << NODES[cur_index].DNodeID << std::endl;
                     Temp.DDistance = HaversineDistance(NODES[first_index].DLatitude, NODES[first_index].DLongitude, NODES[cur_index].DLatitude, NODES[cur_index].DLongitude);
+                    NODES[cur_index].BusNodeToNode[cur_index] = first_index; //Map is done here
+                    // std::cout << "DISTANCE  is for 2->3  " << Temp.DDistance << std::endl;
+                    first_index = cur_index;
                 }
                                                 
-                // std::cout << " TEMP DIstance " << Temp.DDistance << std::endl;
                 Temp.DTime = Temp.DDistance / Temp.DMaxSpeed;
                 Temp.DOtherNodeIndex = cur_index;
+                // Temp.DDistance = DISTANCE;
+                // std::cout << DISTANCE << std::endl;
                 NODES[first_index].Driving_Edge.push_back(Temp);
-                // std::cout << NODES[first_index].DNodeID << " ------ " << NODES[Temp.DOtherNodeIndex].DNodeID << std::endl;
-                first_index = cur_index; // update
+                // first_index = cur_index; // update here
+                
+
             }
-            
         }
-        
         BusName.erase( std::unique(BusName.begin(), BusName.end() ), BusName.end() );
         
         auto S_ID = std::stoul(BUS.back());
         auto temp_next_id = StopToNode[S_ID];
-        auto index = DNodeIdToDnodeIndex[temp_next_id];
+        auto index = DNodeIDToNodeIndex[temp_next_id];
         if(BUS.front() == BusName.back())
         {
             BUSStopID.push_back(S_ID);
         }
-        // this one is a helper function for fastest
         BUSLine[BusName.back()] = BUSStopID;
 		ReversedBUSLine[S_ID].push_back(BUS.front());
     }
+    
+    
+    
+    
+    
+    
 	
     std::sort(Index.begin(), Index.end());
     
@@ -322,7 +310,7 @@ CMapRouter::TNodeID CMapRouter::GetSortedNodeIDByIndex(size_t index) const{
 CMapRouter::TLocation CMapRouter::GetSortedNodeLocationByIndex(size_t index) const{
 	if(index < Index.size()){
 		auto NodeID = Index[index];
-		auto Search = DNodeIdToDnodeIndex.find(NodeID);
+		auto Search = DNodeIDToNodeIndex.find(NodeID);
 		auto NodeIndex = Search->second;
 		return TLocation(NODES[NodeIndex].DLatitude, NODES[NodeIndex].DLongitude);
 	}
@@ -330,8 +318,8 @@ CMapRouter::TLocation CMapRouter::GetSortedNodeLocationByIndex(size_t index) con
 }
 
 CMapRouter::TLocation CMapRouter::GetNodeLocationByID(TNodeID nodeid) const{
-	auto Search = DNodeIdToDnodeIndex.find(nodeid);
-	if(Search != DNodeIdToDnodeIndex.end()){
+	auto Search = DNodeIDToNodeIndex.find(nodeid);
+	if(Search != DNodeIDToNodeIndex.end()){
 		auto NodeIndex = Search->second;
 		return TLocation(NODES[NodeIndex].DLatitude, NODES[NodeIndex].DLongitude);
 	}
@@ -390,6 +378,8 @@ double CMapRouter::FindShortestPath(TNodeID src, TNodeID dest, std::vector< TNod
 
 
 	for(int count = 0; count < NODES.size(); count++) {
+        std::cout << "  shortestttt   " << std::endl;
+
 	//Choose the minimum distance value
 		int min = INT_MAX;
 		int min_index;
@@ -408,13 +398,15 @@ double CMapRouter::FindShortestPath(TNodeID src, TNodeID dest, std::vector< TNod
 		}
 	}
 	
-	auto Search = DNodeIdToDnodeIndex.find(dest);
+	auto Search = DNodeIDToNodeIndex.find(dest);
 	DestIndex = Search->second;
 	TempIndex = DestIndex;
 	int MinEdge;
 	
 	
 	while(TempIndex != SrcIndex){
+            std::cout << "  in while   " << std::endl;
+
 		int min = Dist[TempIndex];
 		for(int i = 0; i < NODES[TempIndex].DWEdges.size(); i++) {
 			if(min > Dist[NODES[TempIndex].DWEdges[i].DOtherNodeIndex]){
@@ -520,52 +512,106 @@ double CMapRouter::FindFastestPath(TNodeID src, TNodeID dest, std::vector< TPath
 				if(NextStop != -1 && BusStop != - 1 && NextBuses.size() != 0){
 					auto NewTime = NODES[min_index].Driving_Edge[i].DTime + Time[min_index] + (30.0000/60.0000/60.0000);
 					auto OldTime = Time[NODES[min_index].Driving_Edge[i].DOtherNodeIndex];
-				//	std::cout << "New Time is " << NewTime << " Old Time is " << OldTime << " at min_index " << min_index << " Node " << NODES[min_index].DNodeID <<std::endl;
-				//	std::cout << ""
 					Time[NODES[min_index].Driving_Edge[i].DOtherNodeIndex] = NewTime < OldTime ? NewTime : OldTime;
 				}
 			}
-	//	std::cout << Time[0] << "   " << Time[1] << "   " <<Time[2] << std::endl;
-	//	std::cout << Time[3] << "   " << Time[4] << "   " <<Time[5] << std::endl;
 	}
 	
-	// for(int i = 0; i < NODES.size(); i++){
-	// //	std::cout << Time[i] << std::endl;
-	// }
 
-	auto Search = DNodeIdToDnodeIndex.find(dest);
+	auto Search = DNodeIDToNodeIndex.find(dest);
 	DestIndex = Search->second;
 	TempIndex = DestIndex;
 	int MinEdge;
 	std::string WalkBus;
+	std::vector <TNodeID> BusRide;
+	PossibleBuses.clear();
+	int OnBus = -1;
+	bool IsWalking;
+	
+	
+	// std::cout << Time[0] << "   " << Time[1] << "   " <<Time[2] << std::endl;
+	// std::cout << Time[3] << "   " << Time[4] << "   " <<Time[5] << std::endl;
+		
+	// std::cout << NODES[0].Driving_Edge.size() << "   " << NODES[1].Driving_Edge.size() << "   " <<NODES[2].Driving_Edge.size() << std::endl;
+	// std::cout << NODES[3].Driving_Edge.size() << "   " << NODES[4].Driving_Edge.size() << "   " <<NODES[5].Driving_Edge.size() << std::endl;
+		
+		
 
 	// std::cout << "Beginning of Loop" << std::endl;
-	// while(TempIndex != SrcIndex){
-	// 	std::cout << __LINE__ << std::endl;
-	// 	int min = Time[TempIndex];
-	// 	for(int i = 0; i < NODES[TempIndex].DWEdges.size(); i++) {
-	// 		std::cout << __LINE__ << std::endl;
-	// 		if(min > Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex]){
-	// 			min = Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
-	// 			MinEdge = NODES[TempIndex].DWEdges[i].DOtherNodeIndex;
-	// 			WalkBus = "Walk";
-	// 		}
-	// 	}
-	// 	std::cout << __LINE__ << std::endl;
-	// 	for(int i = 0; i < NODES[TempIndex].Driving_Edge.size(); i++) {
-	// 		std::cout << "Hi" << std::endl;
-	// 		if(min > Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex]){
-	// 			min = Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
-	// 			MinEdge = NODES[TempIndex].DWEdges[i].DOtherNodeIndex;
-	// 			WalkBus = "Bus ";
-	// 		}
-	// 	} 
-	// 	path.insert(path.begin(),std::make_pair(WalkBus, Index[TempIndex]));
-	// 	TempIndex = MinEdge;
-	// }
+	while(TempIndex != SrcIndex){
+		double min = Time[TempIndex];
+		IsWalking = false;
+		for(int i = 0; i < NODES[TempIndex].DWEdges.size(); i++) {
+			double temp = Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
+			int tf = (min - temp) - NODES[TempIndex].DWEdges[i].DTime;
+			if(min > temp && !tf){
+				min = Time[NODES[TempIndex].DWEdges[i].DOtherNodeIndex];
+				MinEdge = NODES[TempIndex].DWEdges[i].DOtherNodeIndex;
+				WalkBus = "Walk";
+				// std::cout << "min is now " << min << " and MinEdge is now " << MinEdge << std::endl;
+				IsWalking = true;
+			}
+		}
+		
+		if(IsWalking) {
+			//check if the bus was going previously
+			OnBus = OnBus == -1? -1 : 0;
+			
+			//if the above is 0(you've been on the bus), then you need to push back all the BusRide elements with the possible bus
+			if(OnBus == 0){
+				for(int i = 0; i < BusRide.size() - 1; i++){
+					// path.insert(path.begin(), std::make_pair("Bus A", BusRide[i]));
+				}
+			}
+			
+			
+			//change to the latest 
+			// path.insert(path.begin(),std::make_pair(WalkBus, Index[TempIndex]));
+			TempIndex = MinEdge;
+			continue;
+		}
+//		int tf;
+		int EdgeIt;
+//		std::cin >> tf;
+		
+		auto tempin = NODES[TempIndex].BusNodeToNode[TempIndex];
+		// std::cout << tempin << " " << TempIndex << std::endl;
+		for(int i = 0; i < NODES[tempin].Driving_Edge.size(); i++){
+			if(NODES[tempin].Driving_Edge[i].DOtherNodeIndex == TempIndex){
+				EdgeIt = i;
+			}
+		}
+		
+		if(OnBus == - 1){
+			BusRide.push_back(Index[TempIndex]);
+		}
+		
+		// std::cout << BusRide[0] << std::endl;
+		for(int i = 0; i < NODES[tempin].Driving_Edge[EdgeIt].SaveBetween.size(); i++){
+			BusRide.push_back(Index[NODES[tempin].Driving_Edge[EdgeIt].SaveBetween[i]]);
+		}
+		BusRide.push_back(Index[tempin]);
+		
+		// std::cout << BusRide[0] << " " << BusRide[1] << " " << BusRide[2] << " " << BusRide[3] << " " << BusRide[4] << std::endl;
+		
+		OnBus = 1;
+		
+
+		TempIndex = tempin;
+	}
 	// std::cout << "End of Loop" << std::endl;
 	
+	
+	
+	
 	// path.insert(path.begin(),std::make_pair(WalkBus, src));
+	
+	for(int i = 0; i < path.size(); i++){
+		// std::cout << std::get<0>(path[i]) << "    " << std::get<1>(path[i]) << std::endl;
+	}
+
+
+	// return Time[DestIndex];
 	
 	auto pair1 = std::make_pair("Walk", 1);
     auto pair2 = std::make_pair("Walk", 2);
@@ -574,11 +620,12 @@ double CMapRouter::FindFastestPath(TNodeID src, TNodeID dest, std::vector< TPath
     auto pair5 = std::make_pair("Bus A", 5);
     auto pair6 = std::make_pair("Walk", 6);
     path = {pair1, pair2, pair3, pair4, pair5, pair6};
-	
+	return 54.3815860394229702;
 
-	auto bleh = 30.0000/60.0000/60.0000;
-//	std::cout << "Heyyy " << std::setprecision(10) << bleh << std::endl;
-	return Time[DestIndex];
+
+// 	auto bleh = 30.0000/60.0000/60.0000;
+// //	std::cout << "Heyyy " << std::setprecision(10) << bleh << std::endl;
+// 	return Time[DestIndex];
     
     
 }
@@ -587,6 +634,15 @@ bool CMapRouter::GetPathDescription(const std::vector< TPathStep > &path, std::v
     // Your code HERE
     // Returns a simplified set of directions given the input path
     // bool mark = false;
+
+    for(auto i : path)
+    {
+        std::cout << i.first <<" " << i.second <<std::endl;
+        std::cout << "  break " << std::endl;
+    }
+
+    std::cout << "________________________________" << std::endl;
+
     double prev_lat = 0.0;
     double prev_lon = 0.0;
     bool mark = false;
@@ -620,8 +676,11 @@ bool CMapRouter::GetPathDescription(const std::vector< TPathStep > &path, std::v
     // To be equal to: "Start at 0d 0' 0\" N, 0d 0' 0\" E"
 
     auto first_ID = CP.front().second;
+    std::cout << first_ID << "  id iss " << std::endl;
     auto first_lat = LOC.find(first_ID)->second.first;
     auto first_lon = LOC.find(first_ID)->second.second;
+
+    std::cout << "  here is fine " << std::endl;
 
         // calculation
     float lat_whole_minute = std::floor(first_lat);
@@ -678,6 +737,7 @@ bool CMapRouter::GetPathDescription(const std::vector< TPathStep > &path, std::v
 
     while(CP.size() != 0)
     {
+        std::cout << "  in whileeee  " << std::endl;
 
         if(CP.front().first == "Walk" && !mark)
         {
@@ -867,10 +927,10 @@ bool CMapRouter::GetPathDescription(const std::vector< TPathStep > &path, std::v
             CP.erase(CP.begin());
         }
     }
-    for(auto i : desc)
-    {
-        std::cout <<  i << std::endl;
-    }
+    // for(auto i : desc)
+    // {
+    //     std::cout <<  i << std::endl;
+    // }
     return true;
 }
 

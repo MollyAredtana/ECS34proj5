@@ -87,7 +87,7 @@ bool CXMLReader::ReadEntity(SXMLEntity &entity, bool skipcdata)
         {
     
             input.read(TempData, sizeof(TempData));
-            XML_Parse(Parser, TempData, input.gcount(), XML_TRUE);
+            XML_Parse(Parser, TempData, input.gcount(), input.eof());
             if(skipcdata == true && Buffer.front().DType == SXMLEntity::EType::CharData)
             {
                 Buffer.pop_front();
